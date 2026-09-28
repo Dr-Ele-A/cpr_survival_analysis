@@ -1,0 +1,4605 @@
+---
+title: "Impact of SES & perinatal factors on CPR registration of Children: A survival analysis"
+author: "Dr E. O. Abubakar"
+date: "2026-02-03"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 85
+---
+
+Variables already prepared will be analysed in this document. R Project name: `child_nglct_proper_sdc`
+
+# import packages
+
+```{r}
+
+# install.packages("graphPAF")
+
+pacman::p_load(
+      # "AF",
+      "MASS",
+      "mgcv",
+      "assertr",
+      "beepr",
+      "broom",
+      "gtsummary",
+      "knitr",
+      "kableExtra",
+      "mice",
+      "janitor",
+      "patchwork",
+      "qs",
+      "rlang",
+      "rmarkdown",
+      "RODBC",
+      "sailr",
+      "scales",
+      "speedglm"
+  )
+
+library(tictoc)
+library(sjmisc)
+library(SmartEDA)
+# easystats::easystats_update("core")
+library(easystats)
+library(survival)
+library(survminer)
+library(ggsurvfit)
+library(fastDummies)
+library(tidyverse)
+library(graphPAF)
+
+# for automated correlation of all variable types, beyond continous, and their combinations
+# install.packages("smartcor", dependencies = T)
+library(smartcor)
+
+library(parallel)
+options(boot.parallel="snow")
+# use a quater of available
+options(boot.ncpus=as.integer(parallelly::availableCores()*0.75))
+
+#make outputs directory (if it doesn't already exist)
+if(!dir.exists("outputs")){
+  dir.create("outputs")
+}
+
+gc()
+```
+
+# Load, explore & preprocess relevant data
+
+## Census 11 & 21 (Mother & Child) - Cleaned
+
+```{r}
+
+# load cleaned census data
+qload("S:/1409 - Tackling inequalities in child health An interventional epidemiology platfor/Ele/child_nglct/data/mother_chld_census.qsm")
+
+## mother-child in census 2011
+
+mother_child_cens11 <-
+  mother_child_cens11 %>% 
+  mutate(
+    SEX.cohrt = case_match(SEX.cohrt,
+                           1 ~ "Male",
+                           2 ~ "Female",
+                           .default = as.character(SEX.cohrt)
+                           ) %>% factor,
+    GNDR_CD = case_match(GNDR_CD,
+                           1 ~ "Male",
+                           2 ~ "Female",
+                           .default = as.character(GNDR_CD)
+                           ) %>% factor,
+    ALF_STS_CD = case_match(ALF_STS_CD,
+                            4 ~ "04: Direct match on identifiers",
+                            39 ~ "39: Probabilistic match at 90%+",
+                            35 ~ "35: Probabilistic match at 50%+",
+                            99 ~ "99: No match",
+                            NA ~ "NA: Missing info",
+                            .default = as.character(ALF_STS_CD)
+                            ) %>% factor,
+  ) %>% 
+  droplevels() %>%
+  glimpse
+
+mother_child_cens11 %>%
+  frq(GNDR_CD, SEX.cohrt, ALF_STS_CD)
+
+mother_child_cens11 %>% glimpse
+
+## mother-child in census 2021
+mother_child_cens21 <-
+  mother_child_cens21 %>%
+  mutate(
+    SEX.mc_cohrt = case_match(SEX.mc_cohrt,
+                              1 ~ "Male",
+                              2 ~ "Female",
+                              .default = as.character(SEX.mc_cohrt)
+                              ) %>% factor,
+    GNDR_CD = GNDR_CD %>% as.character() %>% case_match(.,
+                           "1" ~ "Male",
+                           "2" ~ "Female",
+                           .default = as.character(GNDR_CD)
+                           ) %>% factor,
+    across(c(where(is.character), -QUALIFICATIONS, -WELSH_LANGUAGE_PROFICIENCY, -ECONOMIC_INACTIVE_STATUS), factor)
+  ) %>% 
+  droplevels() %>%
+  glimpse
+
+mother_child_cens21 %>%
+  frq(GNDR_CD, SEX.mc_cohrt)
+
+```
+
+Focus is on table containing data related to reasons for being on a child protection
+plan (i.e. being on the child protection register - CPR)
+
+## CINW (2010 - 2016 ended)
+
+```{r}
+
+# load data on CPR (returns cinw_full, crcs_full, lacw_full)
+qload("S:\\1409 - Tackling inequalities in child health An interventional epidemiology platfor\\Ele\\child_nglct\\data\\chld_nglct_join.qsm")
+
+# clean cinw (2010 - 2016 ended)
+cinw_full_cln <-
+  cinw_full %>% 
+  select(-c(ALF_MTCH_PCT, EXTRACT_DT)) %>%
+  mutate(
+    across(c(CHILD_HEALTH_SURVEILLANCE_CHECKS, CHILD_PROTECTION_REGISTER, starts_with(c("DISABILITY_", "HEALTH_", "PARENTING_CAPACITY_", "RECENT_REFERRAL_")), YOUTH_OFFENDING, LOOKED_AFTER_CHILD, UNBORN_CHILD),
+           ~case_match(.x,
+                      1~ "True",
+                      0 ~ "False",
+                      80 ~ "Not applicable",
+                      88 ~ "Not available",
+                      .default = as.character(.x))
+           ),
+    GNDR_CD = case_match(GNDR_CD,
+                         1 ~ "Male",
+                         2 ~ "Female",
+                         3 ~ " Non-binary",
+                         4 ~ "Unknown",
+                         .default = as.character(GNDR_CD)
+                         ),
+    CATEGORY_OF_NEED_CODE = as.character(CATEGORY_OF_NEED_CODE) %>%
+      str_to_upper() %>%
+      factor %>% 
+      fct_recode(.,
+                 "Abuse or neglect"                = "N1",
+                 "Disability or illness"           = "N2",
+                 "Parental disability or illness"  = "N3",
+                 "Family in acute stress"          = "N4",
+                 "Family dysfunction"              = "N5",
+                 "Socially unacceptable behaviour" = "N6",
+                 "Undocumented"                    = "N7",
+                 "Absent parenting"                = "N8",
+                 "Adoption disruption"             = "N9"
+                 ),
+    ASYLUM_SEEKER_CODE = case_match(ASYLUM_SEEKER_CODE,
+                                    0 ~ "Not an Asylum-Seeking Child",
+                                    1 ~ "Unaccompanied Asylum-Seeking Child",
+                                    2 ~ "Member of an Asylum-Seeking family",
+                                    .default = as.character(ASYLUM_SEEKER_CODE)
+                                    ),
+    ETHNIC_ORIGIN_CODE  = as.character(ETHNIC_ORIGIN_CODE) %>%
+      str_squish() %>% str_to_upper() %>%
+      factor %>%
+      fct_recode(.,
+                                    'White british' = 'WBRI',
+                                    'White Irish' = 'WIRI',
+                                    'Traveller' = 'WIRT',
+                                    'Gypsy/Gypsy Roma' = 'WROM',
+                                    'Any other white background' = 'WOTH',
+                                    'White & Black carribean' = 'MWBC',
+                                    'White & Black African' = 'MWBA',
+                                    'White & Asian' = 'MWAS',
+                                    'Any other mixed background' = 'MOTH',
+                                    'Indian' = 'AIND',
+                                    'Pakistani' = 'APKN',
+                                    'Bangladeshi' = 'ABAN',
+                 'Any other Asian Background' = 'AOTH',
+                 'Carribean' = 'BCRB',
+                 'African' = 'BAFR',
+                 'Any other black background' = 'BOTH',
+                 'Chinese or Chinese British' = 'CHNE',
+                                    'Other ethnic group' = 'OOTH',
+                                    'Refused' = 'REFU',
+                                    'Not obtained' = 'NOBT',
+                                    ),
+    SOURCE_MOST_RECENT_REFERRAL_CODE = fct_recode(SOURCE_MOST_RECENT_REFERRAL_CODE,
+                                    'Primary/community health' = 'R1',
+                                    'Secondary health' = 'R2',
+                                    'Self referral' = 'R3',
+                                    'Family, friend or neighbour' = 'R4',
+                                    'Central govt agency' = 'R5',
+                                    "LA social support dept" = 'R6',
+                                    'Independent provider agency' = 'R7',
+                                    'LA housing dept or housing association' = 'R8',
+                                    'Other depts of own or other LA' = 'R9',
+                                    'Police' = 'R10',
+                                    'Other agency' = 'R11',
+                                    'Other individual' = 'R12',
+                                    ),
+    ALF_STS_CD = case_match(ALF_STS_CD,
+                            4 ~ "04: Direct match on identifiers",
+                            39 ~ "39: Probabilistic match at 90%+",
+                            35 ~ "35: Probabilistic match at 50%+",
+                            99 ~ "99: No match",
+                            NA ~ "NA: Missing info",
+                            .default = as.character(ALF_STS_CD)
+                            ),
+    across(where(is.character), factor)
+  ) %>% 
+  droplevels() %>%
+  relocate(ends_with("_PE")) %>% 
+  glimpse
+
+```
+
+## CRCR (2017 - 2021 continuing)
+
+```{r}
+# clean crcs (2017 - 2021 continuing)
+crcs_full_cln <- 
+crcs_full %>% 
+  select(-c(ALF_MTCH_PCT, EXTRACT_DT)) %>% 
+  mutate(
+    across(c(CHILD_HEALTH_SURVEILLANCE_CHECKS, CHILD_PROTECTION_REGISTER, starts_with(c("CPR_", "DISABILITY_", "HEALTH_", "PARENTING_CAPACITY_")), -CPR_DATE, YOUTH_OFFENDING, LOOKED_AFTER_CHILD),
+           ~case_match(.x,
+                      1~ "True",
+                      0 ~ "False",
+                      80 ~ "Not applicable",
+                      88 ~ "Not available",
+                      .default = as.character(.x))
+           ),
+#     For CPR fields, NA means not on a CPR
+    across(c(starts_with("CPR_"), -CPR_DATE),
+           ~fct_na_value_to_level(.x,
+                                  level = "Not applicable")
+           ),
+    GNDR_CD = case_match(GNDR_CD,
+                         1 ~ "Male",
+                         2 ~ "Female",
+                         3 ~ " Non-binary",
+                         4 ~ "Unknown",
+                         .default = as.character(GNDR_CD)
+                         ),
+    ETHNIC_ORIGIN_CODE = fct_recode(ETHNIC_ORIGIN_CODE,
+                                    'White' = 'WHTE',
+                                    'Mixed ethnic groups' = 'MIXD',
+                                    'Asian or Asian British' = 'ASAB',
+                                    'Black African/British, or Caribbean' = 'BBAC',
+                                    'Other ethnic group' = 'OOTH',
+                                    'Refused' = 'REFU',
+                                    'Not obtained' = 'NOBT',
+                                    ),
+    CATEGORY_OF_NEED_CODE = fct_recode(CATEGORY_OF_NEED_CODE,
+                                       "Abuse or neglect"                = "N1",
+                                       "Disability or illness"           = "N2",
+                                       "Parental disability or illness"  = "N3",
+                                       "Family in acute stress"          = "N4",
+                                       "Family dysfunction"              = "N5",
+                                       "Socially unacceptable behaviour" = "N6",
+                                       "Undocumented"                    = "N7",
+                                       "Absent parenting"                = "N8",
+                                       "Adoption disruption"             = "N9"
+                                       ),
+    ASYLUM_SEEKER_CODE = case_match(ASYLUM_SEEKER_CODE,
+                                    0 ~ "Not an Asylum-Seeking Child",
+                                    1 ~ "Unaccompanied Asylum-Seeking Child",
+                                    2 ~ "Member of an Asylum-Seeking family",
+                                    .default = as.character(ASYLUM_SEEKER_CODE)
+                                    ),
+    ALF_STS_CD = case_match(ALF_STS_CD,
+                                4 ~ "04: Direct match on identifiers",
+                                39 ~ "39: Probabilistic match at 90%+",
+                                35 ~ "35: Probabilistic match at 50%+",
+                                99 ~ "99: No match",
+                                NA ~ "NA: Missing info",
+                                .default = as.character(ALF_STS_CD)
+                                ),
+    across(where(is.character), factor)
+  ) %>% 
+  droplevels() %>% 
+  relocate(ends_with("_PE")) %>% 
+  glimpse
+
+```
+
+## Join CSC cohort for analysis
+
+The cohort is individuals (children) whose birth period is btw Jan 2009 (CINW start
+data) and Dec 2011 (census date). THis is a 4 year period. For children born b4 2011,
+there mother's HH census attributes would be thesame as theirs.
+
+The study end date would be data at which people born in 2011 (census year), would
+have clocked 18, at which time they are no longer under children care services, i.e.
+2029. Previous study ended at "2021-03-31"
+
+censorship is when an individual became recorded on the CPR On the CINW and CRCS
+tables each person appears multiple times, yearly. I am interested in the first date
+(year, based on DATE_OF_DATA_COLLECTION) they became a recorded in the CPR
+
+I join CINW to CRCS focusing on variables common to both data sets.
+
+RQ: What is the risk that a child will be recorded in the CPR register prior to
+reaching age 18.
+
+The cohort is individuals born btw 2009/01 and 2011/12. They were followed up until
+whichever cam first between their 18th bday and the end of the study by 2021/03
+
+```{r}
+# Stack CINW to CRCS retaining only columns common to both tables
+
+crcs_full_cln %>%
+  glimpse
+
+cinw_crcs_join <-
+bind_rows(
+  list(crcs=crcs_full_cln %>% 
+  select(any_of(colnames(cinw_full_cln)), CPR_DATE),
+  cinw=cinw_full_cln %>% 
+  select(any_of(colnames(crcs_full_cln)))),
+  .id = "dta_orign"
+) %>% #glimpse
+#  for cinw-sourced records (and other not on CPR), fill CPR_DATE with DATE_OF_DATA_COLLECTION
+  mutate(
+    CPR_DATE = coalesce(CPR_DATE, DATE_OF_DATA_COLLECTION),
+    DATE_OF_DATA_COLLECTION = NULL
+  ) %>% 
+  arrange(CHILD_CODE_PE, CPR_DATE) %>% 
+  glimpse
+
+# CSC data end date
+# 2021-05-31
+
+# trace factors per child
+# "DISABILITY_", "HEALTH_", "PARENTING_CAPACITY_", "RECENT_REFERRAL_"
+rm(cinw_crcs_cln)
+cinw_crcs_cpr <-
+cinw_crcs_join %>% 
+  select(!starts_with(c("CPR_", "DISABILITY_", "HEALTH_", "PARENTING_CAPACITY_" )), -c(CHILD_HEALTH_SURVEILLANCE_CHECKS), CPR_DATE) %>% #glimpse
+  arrange(CHILD_CODE_PE, CPR_DATE) %>%
+  group_by(CHILD_CODE_PE) %>% 
+  mutate(
+    ttl_rcrds = n(),
+    rcrd_rnk = dense_rank(CPR_DATE)
+  ) %>% #glimpse
+  #   get children on the CPR
+  filter(CHILD_PROTECTION_REGISTER == "True") %>%
+#   first date on CPR
+  # filter(min(DATE_OF_DATA_COLLECTION)) %>% glimpse
+  slice_head(n = 1) %>% #glimpse
+  ungroup() %>%
+    # compute time to first record on CPR
+#   compute CPR record to Study end & CPR record to 18 years
+#   take whichever one comes first as the end point
+  mutate(
+#     time of first cpr to end of CSC services, indeed the oldest person in the cohort (born btw 2009 and 2011) will be 12yrs at the time of study end
+    # c_18yrs_dt = WOB + years(18),
+    cpr_to_18yrs = as.numeric(interval(CPR_DATE, WOB + years(18)), "years") %>% round(1),
+#     study ends on 2021-05-31 when last CSC data was provided
+# extra created to account for people documented in the last year
+    cpr_to_stdy_end = as.numeric(interval(CPR_DATE, ymd("2021-05-31")), "years") %>% round(1),
+    brth_to_cpr_yrs = as.numeric(as.duration(WOB %--% CPR_DATE), "years") %>% round(1),
+#     events less than zero (i.e. -ve) are clipped to zero
+    cpr_free_yrs = if_else(brth_to_cpr_yrs < 0, 0, brth_to_cpr_yrs),
+  ) %>%
+  glimpse
+
+```
+
+## Mother-Child cohort (cleaned after SB)
+
+NB: Only individuals whose health records had ALF_STS_CD 1, 4 and 39 were extracted.
+
+```{r}
+
+# load & explore cleaned cohort data
+d_cohort_clean <-
+  qread("data/d_cohort_clean.qs") %>%
+  # drop variables associated with CLA
+  select(-starts_with("c_lac_")) %>% 
+  glimpse
+
+#   Our criteria for selecting samples from d_cohort_clean (for the survival analysis) is slightly different to SB's work. see their file 5b - select sample.r
+
+fct_interval <- function(c_wob, c_gest_age, x_flg, x_date) {
+    # for those who have x_flg == 1, which interval does x_date sit in:
+    #
+    #  -5 years                              pregnancy        week of
+    # before wob                               start           birth
+    #     |<------------------------------------>|<------------->|
+    #
+
+    z_lag_5y     <- as.Date(c_wob - dyears(5))
+    z_preg_start <- c_wob - dweeks(c_gest_age)
+
+    res <- case_when(
+        x_flg == "No" ~ "never",
+        x_flg == "Yes" & z_lag_5y     <= x_date & x_date < z_preg_start ~ "pre-pregnancy",
+        x_flg == "Yes" & z_preg_start <= x_date & x_date <= c_wob       ~ "pregnancy",
+        .default = as.character(x_flg)
+    )
+
+    res <- factor(res, c("never", "pre-pregnancy", "pregnancy"))
+    return(res)
+}
+
+# check available variables
+d_cohort_clean %>% glimpse
+
+# study end date is 2021-05-31
+
+# study population (roughly 1yr b4 to 1yr after the 2011 census)
+surv_cohrt_ehr <-
+  d_cohort_clean %>% #glimpse
+#   c_born_in_study_window,
+  filter(c_wob %within% (ymd("2010-01-01") %--% ymd("2012-12-31"))) %>%
+  mutate(
+#     child year of birth
+    c_brth_yr_cat = year(c_wob) %>% factor,
+#     mother's age at child birth
+    m_age_at_birth = as.duration(m_wob %--% c_wob) %>% as.numeric(., "years") %>% round(1),
+    m_age_at_birth_cat = case_when(m_age_at_birth < 16 ~ "Under16",
+                                    m_age_at_birth >= 16 & m_age_at_birth < 18  ~ "16-17",
+                                   m_age_at_birth >= 18 & m_age_at_birth < 20 ~ "18-19",
+                                   m_age_at_birth >= 20 & m_age_at_birth < 25 ~ "20-24",
+                                   m_age_at_birth >= 25 & m_age_at_birth < 30 ~ "25-29",
+                                   m_age_at_birth >= 30 ~ "30plus",
+                                   ) %>% fct_rev(),
+    c_birth_weight_cat = case_when(c_birth_weight < 2500 ~ "Low",
+                                    2500 <= c_birth_weight & c_birth_weight < 4000 ~ "Normal",
+                                    c_birth_weight >= 4000 ~ "Heavy",
+                                    .default = as.character(c_birth_weight)
+                                    ) %>% factor %>%
+  fct_relevel("Heavy", after = 2) %>% fct_relevel("Normal"),
+    # categorise perinatal health (behaviour) as non, or pre/post-pregnancy
+    m_alc_cat  = fct_interval(c_wob, c_gest_age, m_alc_flg,  m_alc_date),
+    m_htn_cat  = fct_interval(c_wob, c_gest_age, m_htn_flg,  m_htn_date),
+    m_mnt_cat  = fct_interval(c_wob, c_gest_age, m_mnt_flg,  m_mnt_date),
+    m_sbm_cat  = fct_interval(c_wob, c_gest_age, m_sbm_flg,  m_sbm_date),
+    
+    # harmonise smoking measure, as we have several data sources and different
+    # values correspond to being an ex-smoker or non-smoker
+    m_smoking_cat = na_if(m_smoking_cat, ""),
+    m_smk2_cat  = case_when(
+            not_na(m_smoking_cat) ~ as.character(m_smoking_cat),
+            m_smk_cat == "S"      ~ "Smk",
+            m_smk_cat == "E"      ~ "Ex",
+            m_smk_cat == "N"      ~ "Non",
+            TRUE ~ "Unknown"
+        ) %>%
+        factor(c("Non", "Ex", "Smk", "Unknown")),
+#     convert wimd from decile to quintile
+      m_wimd2014_quintile = m_wimd2014_decile %>% fct_collapse(
+            "1 - Most deprived"  = c("1 - Most deprived", "2"),
+            "2"                  = c("3", "4"),
+            "3"                  = c("5", "6"),
+            "4"                  = c("7", "8"),
+            "5 - Least deprived" = c("9", "10 - Least deprived")
+        ) %>% fct_rev(),
+# cuases singularity problems in the survival analysis
+# %>% fct_na_value_to_level(level = "Missing"),
+      # m_townsend2011_quintile = m_townsend2011_quintile %>%
+  # fct_na_value_to_level(level = "Missing"),
+#     will use more reliable data on ethnicity from the census
+    c_ethn_cat =
+            c_ethnicity_nm %>%
+            as.character() %>%
+            str_to_lower() %>%
+            str_replace(" - ethnic category 2001 census", "") %>%
+            str_replace(" - ethn categ 2001 census", "") %>%
+            str_replace(".*black .+ white.*", "black and white") %>%
+            str_replace(".*white .+ black.*", "white and black") %>%
+            str_trim() %>%
+            factor() %>%
+            fct_collapse(
+                "Asian" = c(
+                    "any other asian background",
+                    "bangladeshi",
+                    "bangladeshi (asian or british)",
+                    "bangladeshi or british bangladeshi",
+                    "chinese",
+                    "indian",
+                    "indian (asian or british)",
+                    "indian or british indian",
+                    "pakistani",
+                    "pakistani (asian or british)",
+                    "pakistani or british pakistani",
+                    "other asian background",
+                    "other asian ethnic group"
+                ),
+                "Black" = c(
+                    "any other black background",
+                    "african",
+                    "african(black or black british)",
+                    "black african",
+                    "black british",
+                    "caribbean",
+                    "caribbean (black or black british)",
+                    "other (black or black british)",
+                    "other black background"
+                ),
+                "Mixed" = c(
+                    "any other mixed background",
+                    "black and white",
+                    "chinese and white",
+                    "mixed white & asian",
+                    "other ethnic, asian/white orig",
+                    "other ethnic, mixed origin",
+                    "other ethnic, other mixed orig",
+                    "other mixed background",
+                    "other mixed white",
+                    "white and asian",
+                    "white and black"
+                ),
+                "White" = c(
+                    "any white background",
+                    "other white background",
+                    "other white british ethnic group",
+                    "polish",
+                    "white",
+                    "white british",
+                    "white irish",
+                    "white - other",
+                    "welsh"
+                ),
+                "Other" = c(
+                    "any other ethnic group",
+                    "any other group",
+                    "other",
+                    "other ethnic group"
+                )
+            ) %>%
+            factor(levels = c(
+                "White",
+                "Asian",
+                "Black",
+                "Mixed",
+                "Other"
+            )) %>%
+            fct_na_value_to_level("Unknown"),
+        m_hh_child_n = tidyr::replace_na(m_hh_child_n, 0),
+        m_hh_child_cat = case_when(
+                m_hh_adult_n >= 1 & m_hh_child_n == 0 ~ "0 children",
+                m_hh_adult_n >= 1 & m_hh_child_n >= 1 ~ "1+ children"
+            ) %>%
+            factor(), #%>%
+        m_hh_adult_cat = case_when(
+                m_hh_adult_n == 1 ~ "1 adult",
+                m_hh_adult_n == 2 ~ "2 adults",
+                m_hh_adult_n >= 3 ~ "3+ adults"
+            ) %>%
+            factor(), #%>%
+          # fct_na_value_to_level("unknown"),
+        m_hh_cat = case_when(
+                m_hh_adult_n == 1 & m_hh_child_n == 0 ~ "1 adult only",
+                m_hh_adult_n == 1 & m_hh_child_n >= 1 ~ "1 adult, 1+ children",
+                m_hh_adult_n == 2 & m_hh_child_n == 0 ~ "2 adults only",
+                m_hh_adult_n == 2 & m_hh_child_n >= 1 ~ "2 adults, 1+ children",
+                m_hh_adult_n >= 3 & m_hh_child_n == 0 ~ "3+ adults only",
+                m_hh_adult_n >= 3 & m_hh_child_n >= 1 ~ "3+ adults, 1+ children"
+            ) %>%
+            factor() %>%
+          fct_na_value_to_level("unknown"),
+      across(where(is.character), ~str_squish(.x) %>% fct_na_value_to_level(level = "None")
+      )
+  ) %>%
+    # glimpse
+  # frq(m_alc_cat, m_htn_cat, m_mnt_cat, m_sbm_cat #c_birth_weight_cat, c_ethn_cat
+  #     )
+  filter(
+        c_stillbirth_flg == "No" & welsh_birth_flg == "Yes",
+        not_na(c_wob) & not_na(c_gest_age) & not_na(c_preterm_birth_flg) & not_na(c_birth_weight), #c has birth info
+        c_gp_flg == "Yes", #c_has_gp,
+        has_m == "Yes",
+        m_gp_flg == "Yes",#m_has_gp,
+        m_age_at_birth >= 16,
+    ) %>% 
+  droplevels() %>%
+#   select and rename pertinent variables
+  select(
+    # id
+        c_alf_pe,
+        c_alf_sts_cd,
+    # outcome
+        c_wob,
+        c_death_date,
+    # covariates
+        c_brth_yr_cat,
+        c_sex,
+        c_ethn     = c_ethn_cat,
+        c_cgm      = c_cgm_flg,
+        c_ptb      = c_preterm_birth_flg,
+        c_bw       = c_birth_weight_cat,
+    m_alf_pe,
+    m_alf_sts_cd,
+        m_age      = m_age_at_birth,
+        m_age_cat  = m_age_at_birth_cat,
+        m_lrn      = m_lrn_flg,
+        m_smk      = m_smk2_cat,
+        m_hh_child = m_hh_child_cat,
+        m_hh_adult = m_hh_adult_cat,
+        m_hh       = m_hh_cat,
+        m_alc      = m_alc_cat,
+        m_mnt      = m_mnt_cat,
+        m_htn      = m_htn_cat,
+        m_sbm      = m_sbm_cat,
+        m_twns2011 = m_townsend2011_quintile
+    ) %>%
+  glimpse
+
+gc()
+
+save.image()
+```
+
+## Join CSC data
+
+```{r}
+
+# study ends when an individual attains age 16, at which time they are no longer subject to CSC records
+
+chld_cpr_dta <-
+cinw_crcs_cpr %>% 
+  # select(ALF_PE, CHILD_PROTECTION_REGISTER, DATE_OF_DATA_COLLECTION, WOB, GNDR_CD, drtn_yrs_cln) %>% 
+  select(ALF_PE, CHILD_PROTECTION_REGISTER, CPR_DATE, cpr_free_yrs, cpr_to_stdy_end) %>%
+  rename_with(~paste0("c_", .x)) %>% 
+  glimpse
+
+# 8296/22505 (36.9%) of CPR data has missing alf_pe
+chld_cpr_dta %>% 
+  ExpData(2)
+# THis means about 8296 who may have CPR cannot be determined in the data
+
+# study end date is 2021-05-31
+
+ehr_cpr_cohrt <- 
+surv_cohrt_ehr %>% 
+  left_join(chld_cpr_dta, by = c("c_alf_pe" = "c_ALF_PE")) %>%
+  # filter(!is.na(c_CHILD_PROTECTION_REGISTER)) %>% 
+   mutate(
+     c_CHILD_PROTECTION_REGISTER = fct_na_value_to_level(c_CHILD_PROTECTION_REGISTER, level = "False"),
+     cpr_evnt = case_match(c_CHILD_PROTECTION_REGISTER,
+                           "True" ~ 1,
+                           "False" ~ 0),
+     frst_evnt_cat = case_when(
+       c_CHILD_PROTECTION_REGISTER == "False" & !is.na(c_death_date) ~ "Death",
+       c_CHILD_PROTECTION_REGISTER == "True" ~ "CPR",
+       c_death_date > c_CPR_DATE & c_death_date < ymd("2021-05-31") ~ "Death",
+       .default = "Study End"
+     ) %>% factor,
+         # stdy_end_age_yrs = as.numeric(as.duration(c_wob %--% (c_wob+dyears(18))), "years") %>% round(1),
+     dth_age_yrs = as.numeric(as.duration(c_wob %--% c_death_date), "years") %>% round(1),
+     #     study ends on 2021-05-31 when last CSC data was provided
+  # extra created to account for people documented in the last year
+    stdy_end_age_yrs = as.numeric(as.duration(c_wob %--% ymd("2021-05-31")), "years") %>% round(1),
+# #   if event doesn't happen before study end, individual survived throughout the study duration/followup
+    c_cpr_2_stdy_end_yrs = tidyr::replace_na(c_cpr_to_stdy_end, 0),
+    age_1st_evnt = case_when(
+      frst_evnt_cat == "CPR" ~ `c_cpr_free_yrs`,
+      frst_evnt_cat == "Death" & dth_age_yrs < stdy_end_age_yrs ~ `dth_age_yrs`,
+      frst_evnt_cat == "Study End" | dth_age_yrs >= stdy_end_age_yrs ~ `stdy_end_age_yrs`,
+    )
+     ) %>% 
+  # some individuals have more than one date for first CPR registration, so dedup
+  slice_min(order_by = c_CPR_DATE, n = 1, by=c_alf_pe) %>%
+  glimpse
+
+```
+
+The (exponentiated) regression coefficients from cox regression are interpreted as
+hazard-ratios.
+
+# Cohort updated with census records
+
+Census variables are more reliable, so pertinent ones in SB data will be swapped with those from the census. This includes the main exposure
+
+## Census-updated cohort table
+
+Swap ethnicity, m_hh_child, m_hh_adult, m_twns2011
+
+The 4 Dimensions considered for HH deprivation (DEPRIVED) are: 1, Education:
+DEPEDHUK11 [Household education deprivation], 2, Employment: DEPEMHUK11 [Employment
+deprivation], 3, Health and Disability: DEPHDHUK11 [Health and Disability
+Deprivation], 4, Housing: DEPHSHUK11 [Housing deprivation]
+
+The main exposure One option is to use number of dimensions of HH deprivation
+(DEPRIVED).
+
+Another is to use an intersection of all the dimensions of deprivation as the main
+exposure, so that the study can speak to both particular dimensions and their
+combined (or interaction) effects.
+
+Replace: 
+- m_hh_adults with ADTHUK11 [Number of adults in household], grouped as 1,
+2, and 3+ 
+- ethnicity with AETHPUK11 [Alternative Ethnicity Ethnic group
+(Alternative)]: Arab, 'Caribbean, African, Black British and other Black', Chinese,
+Indian, Mixed/multiple ethnic groups, No code required, Other ethnic group, Pakistani and other Asian/Asian British, White. "No code required" recoded as "Unknown".
+m_hh_adult with DPCFAMUK11 [Dependent children in family]: 0, 1, 2, 3+. Or count
+using DCHPUK11 [Dependent child indicator].
+
+Add: 
+- CFSPUK11 [Child family status]: Cohabiting couple family, Lone parent family,
+Married couple family, Same-sex civil partnership family, 
+- MARSTAT [Marital and civil partnership status]: Divorced Formerly in a same-sex civil partnership which is now legally dissolved In a registered same-sex civil partnership Married Separated (but still legally in a same-sex civil partnership) Separated (but still legally married) Single (never married or never registered a same-sex civil partnership) Surviving partner from a same-sex civil partnership Widowed
+
+Categories in MARSTAT have been recoded to enhance clarity, Where suffix is
+"Same-sex", this applies to "same-sex civil partnerships"
+
+This might be more relevant than the former because unlike the former, it provides
+marital information whether the individual has a child or not. However, there is a
+need to recode categories into fewer groups.
+
+-   Optionally: HLQPUK11 [Highest level of qualification]: Level 4, Level 3,
+    Apprenticeship, Level 2, Level 1, Others, No qualifications, Not applicable. But
+    this might collide with HH deprivation count/dimensions, but this is the case
+    with aspects like health (used in SB's study).
+-   Optionally: LRESPUK11 [Length of residence in the UK]: UK-born, <=2 yrs, 2 -
+    <5yrs, 5 - <10yrs, >=10yrs
+
+```{r}
+# there is a near consistent amount of missing observations in all categories, which appears systematic and needs investigations to understand the source. Missing values are either <NA> | 837234 | 56.08 | or | 836185 | 56.01 |    <NA> | or | 837079 | 56.07 |    <NA> |, 
+
+# Recoding NA to a new category tends to create an artifact in the data, so they have been left as is, until their source is better understood.
+
+mother_ses_cens11 <- # n = 96,442
+mother_child_cens11 %>% #n = 1,492,953
+  semi_join(ehr_cpr_cohrt, by = c("ALF_PE" = "m_alf_pe")) %>% 
+    # glimpse
+  select(ALF_PE, ADTHUK11, AETHPUK11, DPCFAMUK11, CFSPUK11, MARSTAT, DEPRIVED, DEPEDHUK11, DEPEMHUK11, DEPHDHUK11, DEPHSHUK11, LRESPUK11, m_edu = HLQPUK11) %>% #replace CFSPUK11 with MARSTAT
+  # frq()
+  mutate(
+    m_edu = fct_recode(m_edu,
+                       "None" = "No qualifications",
+                       "None" = "Not applicable"
+                       ), #%>% 
+    m_ethnic = AETHPUK11 %>% 
+#       'No code require' no recoded to NA instead of 'Unknown' to mitigate problems of colinearity and sparse levels
+      fct_recode(NULL = "No code required") %>%
+      fct_infreq(), #%>% 
+    m_hh_adult = case_match(ADTHUK11,
+                            c(0,1) ~ "0/1", #grouped because of small numbers of the 0 category
+                               c(3:50) ~ "3+",
+                               .default = as.character(ADTHUK11)
+    ) %>% factor %>%
+      fct_relevel("2"), #makes this the reference level
+#     'No code required' changed to 0
+    m_hh_child_depndt = case_when(
+      grepl("^No dependent", DPCFAMUK11) ~ "0",
+      grepl("^One dependent", DPCFAMUK11) ~ "1",
+      grepl("^Two dependent", DPCFAMUK11) ~ "2",
+      grepl("^Three or more dependent", DPCFAMUK11) ~ "3+",
+      grepl("^No code", DPCFAMUK11) ~ "0", #otherwise 99
+      .default = DPCFAMUK11
+    ) %>% factor, #%>%
+    m_hh_deprv_no = case_when(
+      grepl(".not deprived.", DEPRIVED) ~ "0",
+      grepl("deprived in 1 dimension$", DEPRIVED) ~ "1",
+      grepl("deprived in 2 dimensions$", DEPRIVED) ~ "2",
+      grepl("deprived in 3 dimensions$", DEPRIVED) ~ "3",
+      grepl("deprived in 4 dimensions$", DEPRIVED) ~ "4",
+      grepl("^No code", DEPRIVED) ~ "0", #otherwise 99
+      .default = DEPRIVED
+    ) %>% factor, #%>%
+     hh_edu_dprvd = case_when(
+       grepl("Yes", DEPEDHUK11) ~ "education",
+       grepl("^No code", DEPEDHUK11) ~ NA, #was no
+       ),# %>% fct_na_value_to_level("No"),
+      hh_emp_dprvd = case_when(
+       grepl("Yes", DEPEMHUK11) ~ "employment",
+       grepl("^No code", DEPEMHUK11) ~ NA, #was no
+       ),# %>% fct_na_value_to_level("No"),
+      hh_hlt_dprvd = case_when(
+       grepl("Yes", DEPHDHUK11) ~ "health",
+       grepl("^No code", DEPHDHUK11) ~ NA, #was no
+       ),# %>% fct_na_value_to_level("No"),
+      hh_hous_dprvd = case_when(
+       grepl("Yes", DEPHSHUK11) ~ "housing",
+       grepl("^No code", DEPHSHUK11) ~ NA, #was no
+       ),# %>% fct_na_value_to_level("No"),
+    m_fam_status = CFSPUK11 %>%
+  fct_relabel(~gsub("^Has children: ", "", .x)) %>%
+  fct_relabel(~gsub(" family$", "", .x)) %>% 
+      fct_recode(NULL = "No code required") %>% 
+  fct_relevel("Married couple") %>% 
+      fct_relevel("Does not have children", after = 4),
+       # fct_na_value_to_level("Unknown"),
+    m_mar_status = fct_recode(MARSTAT,
+      "Divorced (same-sex)" = "Formerly in a same-sex civil partnership which is now legally dissolved",
+     "Married (Same-sex)" = "In a registered same-sex civil partnership",
+     "Separated (same-sex)" = "Separated (but still legally in a same-sex civil partnership)",
+     "Separated" = "Separated (but still legally married)",
+     "Single" = "Single (never married or never registered a same-sex civil partnership)",
+     "Widowed (same-sex)" = "Surviving partner from a same-sex civil partnership",
+    ) %>% 
+  fct_infreq() %>% 
+      # fct_relevel("Unknown", after = Inf) %>% 
+  fct_relevel("Widowed", after = 4) %>% 
+  fct_relevel("Married"), #the reference category
+    m_uk_stay_len = fct_recode(
+      LRESPUK11,
+      "UK-born" = "Born in the UK",
+      "10+ yrs" = "Resident in UK: 10 years or more",
+      "5 - <10 yrs" = "Resident in UK: 5 years or more but less than 10 years",
+      "<5 yrs" = "Resident in UK: 2 years or more but less than 5 years",
+      "<5 yrs" = "Resident in UK: Less than 2 years",
+      NULL = "No code required"
+    ) %>% 
+      fct_relevel(c("UK-born", "10+ yrs", "5 - <10 yrs", "<5 yrs")),
+  ) %>% 
+  mutate(
+    m_hh_deprv_dms = paste0(hh_edu_dprvd, "+", hh_emp_dprvd, "+", hh_hlt_dprvd, "+", hh_hous_dprvd) %>%
+      str_replace_all("\\+NA|NA\\+", "") %>%
+      case_match(., "NA"~"None", .default = .) %>%
+      factor %>%
+      fct_infreq() %>% 
+      fct_relevel("housing", after = 4) %>%
+      fct_relevel("education+employment+health", "employment+health+housing", after = 11) %>%
+      fct_relevel("education+employment+health+housing", after = Inf),
+  ) %>% 
+#   drop processed variables
+  select(-c(ADTHUK11, AETHPUK11, DPCFAMUK11, DEPRIVED, DEPEDHUK11, DEPEMHUK11, DEPHDHUK11, DEPHSHUK11, MARSTAT, LRESPUK11, CFSPUK11, hh_edu_dprvd, hh_emp_dprvd, hh_hlt_dprvd, hh_hous_dprvd)) %>% 
+glimpse
+
+ehr_cpr_cens11_cohrt <- # n=106,365
+ehr_cpr_cohrt %>% #glimpse()
+  # drop variables being replaced with census ones
+  select(-c(m_hh_child, m_hh_adult, m_hh)) %>% 
+  left_join(mother_ses_cens11, by = c("m_alf_pe" = "ALF_PE")) %>% 
+  mutate(
+     frst_cpr = frst_evnt_cat=="CPR",
+     m_twns2011 = fct_rev(m_twns2011)
+  ) %>%
+#   variable selection with renaming
+  select(-c(c_cpr_to_stdy_end, c_cpr_2_stdy_end_yrs), c_cpr_evnt = cpr_evnt, c_frst_evnt_cat=frst_evnt_cat, c_dth_age_yrs=dth_age_yrs, c_stdy_end_age_yrs=stdy_end_age_yrs, c_age_1st_evnt = age_1st_evnt, c_frst_cpr=frst_cpr) %>%
+  filter(!is.na(c_sex)) %>% #removed due to small numbers (n = 4)
+  droplevels() %>%
+  glimpse
+
+# for renaming variables
+var_list_full <- list(
+# dummy
+    # "dummy"              = "Total",
+    # child baseline measures
+    "c_brth_yr_cat" = "Child birth year",
+    "c_sex"              = "Child sex",
+    "c_ethn"             = "Child ethnicity",
+    "c_ptb"              = "Child preterm birth",
+    "c_bw"               = "Child birth weight",
+    "c_cgm"              = "Child congenital anomalies",
+    "c_CHILD_PROTECTION_REGISTER" = "Child CPR registration",
+    "c_frst_evnt_cat" = "Child 1st event",
+    "c_age_1st_evnt" = "Child median age at CPR registration",
+    "m_age_cat"          = "Mother age at birth (category)",
+    "m_lrn"              = "Mother learning difficulties/disabilities",
+    "m_smk"              = "Mother smoking",
+    "m_alc"              = "Mother alcohol problems",
+    "m_mnt"              = "Mother mental health issues",
+    "m_htn"              = "Mother hypertension",
+    "m_sbm"              = "Mother substance use",
+    "m_ethnic"           = "Mother ethnicity",
+    "m_edu"             = "Mother education",
+    "m_hh_child_depndt"  = "Mother HH dependent children",
+    "m_hh_adult"         = "Mother HH adults",
+    "m_mar_status"       = "Mother marital status",
+    "m_fam_status" = "Mother family status",
+    "m_uk_stay_len"      = "Mother length of UK stay",
+    "m_hh_deprv_no"      = "Mother HH deprivation count",
+    "m_hh_deprv_dms"     = "Mother HH deprivation dimensions",
+    # "m_wimd2014"         = "Mother WIMD 2014 quintile",
+    "m_twns2011"         = "Mother Townsend 2011 quintile"
+)
+
+names(var_list_full)
+
+tic()
+print(Sys.time())
+ehr_cpr_cens11_cohrt %>% 
+  select(all_of(names(var_list_full))) %>% 
+  # glimpse
+  labelled::set_variable_labels(
+    .labels = var_list_full,
+    .strict = F
+  ) %>% 
+  # glimpse
+  tbl_summary(
+    # by = mother_child,
+    type = list(where(is.logical) ~ "categorical",
+                all_dichotomous() ~ "categorical"),
+    missing_text = "NA (Missing)",
+    missing_stat = "{N_miss} ({p_miss}%)",
+    statistic = list(
+      all_continuous() ~ "{median} ({p25}, {p75})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = everything() ~ c(0,2)
+  ) %>%
+  bold_labels() %>% 
+  modify_caption("**Characteristics of Birth Cohort A: Born between 2010 and 2012 followed until Study End (31 March, 2021)**") %>% 
+  as_gt() %>% #convert output to a gt table for onward saving.
+  gt::tab_header(title = gt::md("Characteristics of the birth (prospective) cohort for this study")) %>%
+  gt::gtsave("outputs\\cpr_birth_cohort_2010_2012.docx") #save produced table as word
+print(Sys.time())
+toc()
+
+
+gc()
+save.image()
+
+```
+
+Future extension of study can consider: OCCPUK113 [Occupation (Major group)] &
+NSSEC [National Statistics Socio-economic Classification]
+# Data exploration
+## Correlation analyses
+```{r}
+# function to rename discrete x|y axis using a named list
+# not needed as can be done with map_chr, such as map_chr(var_list_full, identity)
+# make_axis_labels <- 
+#   function(label_lookup){
+#     function(breaks){
+#       vapply(breaks,
+#              function(x){
+#                if(x %in% names(label_lookup)){
+#                  as.character(label_lookup[[x]])
+#                } else{
+#                  x #retain lables not present in the lookup list
+#                }
+#              },
+#              character(1))
+#     }
+#   }
+# for renaming variables v2
+var_list_full2 <- list(
+    # child baseline measures
+    "c_brth_yr_cat" = "Child birth year",
+    "c_sex"              = "Child sex",
+    "c_ethn"             = "Child ethnicity",
+    "c_ptb"              = "Child preterm birth",
+    "c_bw"               = "Child birth weight",
+    "c_cgm"              = "Child congenital anomalies",
+    "c_CHILD_PROTECTION_REGISTER" = "CPR registration",
+    "c_frst_evnt_cat" = "Child 1st event",
+    "m_age_cat"          = "Mother age at birth",
+    "m_lrn"              = "Mother learning\ndifficulties/disabilities",
+    "m_smk"              = "Mother smoking",
+    "m_alc"              = "Mother alcohol problems",
+    "m_mnt"              = "Mother mental health\nissues",
+    "m_htn"              = "Mother hypertension",
+    "m_sbm"              = "Mother substance use",
+    "m_ethnic"           = "Mother ethnicity",
+    "m_edu"              = "Mother education",
+    "m_hh_child_depndt"  = "Mother HH dependent\nchildren",
+    "m_hh_adult"         = "Mother HH adults",
+    "m_mar_status"       = "Mother marital status",
+    "m_fam_status"       = "Mother family status",
+    "m_uk_stay_len"      = "Mother length of UK stay",
+    "m_hh_deprv_no"      = "Mother HH deprivation\ncount",
+    "m_hh_deprv_dms"     = "Mother HH deprivation\ndimensions",
+    # "m_wimd2014"         = "Mother WIMD 2014 quintile",
+    "m_twns2011"         = "Mother Townsend 2011 quintile"
+)
+
+names(var_list_full2)
+
+# full variables all
+vars_all <- c(
+  "c_CHILD_PROTECTION_REGISTER"  ,
+  "c_sex",
+    "c_ethn",
+    "m_age_cat",
+    "m_edu",
+    "m_hh_child_depndt",
+    "m_hh_adult",
+    "m_mar_status", #**
+    "m_hh_deprv_dms",
+    "m_hh_deprv_no", #**
+    "c_cgm",
+    "c_ptb",
+    "c_bw",
+    "m_alc",
+    "m_lrn",
+    "m_mnt",
+    "m_sbm",
+    "m_smk"
+    )
+
+# map 'categorical' to each column name
+clmn_types <- set_names(
+  rep(list("categorical"), ncol(ehr_cpr_cens11_cohrt)),
+  names(ehr_cpr_cens11_cohrt)
+)
+
+# appears like a very time consuming operation (over one hour)
+tic()
+Sys.time()
+cars_corr_all <- 
+ehr_cpr_cens11_cohrt %>%
+  select(all_of(vars_all)) %>%
+  smart_cormat(
+    types = clmn_types,
+    assume_latent_normal = F,
+               verbose = T
+               )
+Sys.time()
+toc() #3.03 sec elapsed
+
+# Tidy and export correlation matrix to csv file
+cars_corr_all |>
+  tidy() |>
+  mutate(var_x = recode_values(var_x, from = names(var_list_full2),
+                       to = var_list_full2),
+         var_y = recode_values(var_y, from = names(var_list_full2),
+                       to = var_list_full2)
+         ) |> #glimpse()
+  write_csv("outputs\\cars_corr_all_plt.csv")
+  # view()
+
+# create plot
+cars_corr_all_plt <- 
+  ggcor_heatmap(cars_corr_all,
+                lower_only = T,
+                text_size = 4) +
+  scale_x_discrete(labels = map_chr(var_list_full2, identity)) +
+  scale_y_discrete(labels = map_chr(var_list_full2, identity)) +
+  # Replace legend
+  scale_fill_gradient2(limits = c(0, 1),
+                       breaks = seq(0, 1, by = 0.2),
+                       high = muted("red"),
+                       na.value = NA,
+                       name = "Cramer's V"
+                       ) +
+  # labs(
+  #   title = "Correlation Matrix"
+  # ) +
+  theme(axis.text = element_text(size = 12),
+        legend.position = "right",
+        legend.justification.right = "bottom",
+        legend.key.height = grid::unit(2, "cm")
+        )
+
+ggsave(
+  filename = "outputs\\cars_corr_all_plt.png",
+  plot = cars_corr_all_plt,
+  # scale = 0.8,
+  height = 30,
+  width = 35,
+  units = 'cm',
+  dpi = 900
+)
+
+gc()
+save.image()
+
+# cars_corr_all |>
+#   tidy() |> 
+#   select(-c("method", "rationale", "p.value", "p_method", "null_hypothesis", "p_interpretation")) |> 
+#   glimpse()
+
+```
+
+# Survival plot: Smoothening helper function
+```{r}
+# SDC-friendly smoothed survival/risk plot helper.
+# The survival model is unchanged; smoothing/noise is applied only to the plotted curve.
+
+plot_sdc_smooth_survfit <- function(survfit_obj,
+                                    type = c("risk", "survival"),
+                                    method = "loess",
+                                    formula = y ~ x,
+                                    span = 0.10,
+                                    smooth_n = 100,
+                                    method.args = list(),
+                                    add_noise = FALSE,
+                                    noise_scope = c("tail", "all"),
+                                    noise_tail_n = 5,
+                                    noise_sd = 0.0005,
+                                    noise_seed = NULL,
+                                    show_ci = TRUE,
+                                    subtitle = NULL,
+                                    caption = NULL) {
+  type <- match.arg(type)
+  noise_scope <- match.arg(noise_scope)
+
+  plot_data <-
+    ggsurvfit::tidy_survfit(survfit_obj) #%>%
+  
+  if ("strata" %in% names(plot_data)) {
+    plot_data <- plot_data |> dplyr::mutate(strata = as.character(strata))
+  }else{
+    plot_data <- plot_data |> dplyr::mutate(strata = "Overall")
+  }
+
+  if (!"conf.low" %in% names(plot_data)) {
+    plot_data <- plot_data %>% dplyr::mutate(conf.low = NA_real_)
+  }
+
+  if (!"conf.high" %in% names(plot_data)) {
+    plot_data <- plot_data %>% dplyr::mutate(conf.high = NA_real_)
+  }
+
+  # Convert survival probability to cumulative risk when requested.
+  if (type == "risk") {
+    plot_data <-
+      plot_data %>%
+      dplyr::mutate(
+        conf.low_surv = .data$conf.low,
+        conf.high_surv = .data$conf.high,
+        estimate = 1 - .data$estimate,
+        conf.low = 1 - .data$conf.high_surv,
+        conf.high = 1 - .data$conf.low_surv
+      )
+  }
+
+  # Optional SDC noise: usually apply only to the final time points, where
+  # small numbers at risk can make exact curve steps more disclosure-sensitive.
+  if (add_noise) {
+    if (!is.null(noise_seed)) {
+      set.seed(noise_seed)
+    }
+
+    plot_data <-
+      plot_data %>%
+      dplyr::group_by(.data$strata) %>%
+      dplyr::arrange(.data$time, .by_group = TRUE) %>%
+      dplyr::mutate(
+        sdc_noise_zone = dplyr::case_when(
+          noise_scope == "all" ~ TRUE,
+          dplyr::row_number() > dplyr::n() - noise_tail_n ~ TRUE,
+          TRUE ~ FALSE
+        ),
+        sdc_noise = dplyr::if_else(
+          .data$sdc_noise_zone,
+          stats::rnorm(dplyr::n(), mean = 0, sd = noise_sd),
+          0
+        ),
+        dplyr::across(
+          c("estimate", "conf.low", "conf.high"),
+          ~ dplyr::if_else(
+            .data$sdc_noise_zone & !is.na(.x),
+            pmin(pmax(.x + .data$sdc_noise, 0), 1),
+            .x
+          )
+        ),
+        conf.low = pmin(.data$conf.low, .data$estimate, na.rm = TRUE),
+        conf.high = pmax(.data$conf.high, .data$estimate, na.rm = TRUE)
+      ) %>%
+      dplyr::ungroup()
+  }
+
+  p <-
+    ggplot2::ggplot(
+      plot_data,
+      ggplot2::aes(
+        x = .data$time,
+        y = .data$estimate,
+        colour = .data$strata,
+        fill = .data$strata,
+        group = .data$strata
+      )
+    )
+
+  if (show_ci) {
+    p <-
+      p +
+      ggplot2::geom_ribbon(
+        ggplot2::aes(ymin = .data$conf.low, ymax = .data$conf.high),
+        alpha = 0.18,
+        colour = NA
+      )
+  }
+# scales::
+  # scale_x
+  p +
+    ggplot2::geom_smooth(
+      method = method,
+      formula = formula,
+      span = span,
+      n = smooth_n,
+      method.args = method.args,
+      se = FALSE,
+      linewidth = 0.5,
+      na.rm = TRUE
+    ) +
+    ggplot2::scale_y_continuous(labels = scales::label_percent()
+                                ) +
+    # modify with new time span
+    # ggplot2::scale_x_continuous(limits = c(0,11), breaks = seq.int(0,11,1)) +
+    ggplot2::labs(
+      subtitle = subtitle,
+      caption = caption,
+      y = ifelse(type == "risk", "% Risk (CPR Registration)", "Survival Probability"),
+      x = "Follow-up Age (years)",
+      colour = NULL,
+      fill = NULL
+    ) +
+    ggplot2::theme_bw() +
+    ggplot2::theme(legend.position = "bottom")
+}
+
+#----------------------------------------------
+# Replace the unadjusted plot block with:
+# all_klpn_plts[[paste0(covar_all[i])]] <-
+#   plot_sdc_smooth_survfit(
+#     survfit_obj = all_klpn_mdls[[i]],
+#     type = "risk",
+#     method = "loess",
+#     span = 0.75,
+#     add_noise = FALSE,
+#     subtitle = paste0(names(covar_all[i]))
+#   )
+
+# If you want the optional final-tail SDC jitter:
+# all_klpn_plts[[paste0(covar_all[i])]] <-
+#   plot_sdc_smooth_survfit(
+#     survfit_obj = all_klpn_mdls[[i]],
+#     type = "risk",
+#     method = "loess",
+#     span = 0.75,
+#     add_noise = TRUE,
+#     noise_scope = "tail",
+#     noise_tail_n = 4,
+#     noise_sd = 0.0005,
+#     noise_seed = 1409,
+#     subtitle = paste0(names(covar_all[i]))
+#   )
+
+# For adjusted plots, replace only the ggsurvfit(...) + ... plotting section with:
+# cxph_adj_demo_plts[[adj_mdl_nme]] <-
+#   plot_sdc_smooth_survfit(
+#     survfit_obj = cxph_adj_demo_mdls[[adj_mdl_nme]],
+#     type = "risk",
+#     method = "loess",
+#     span = 0.75,
+#     add_noise = FALSE,
+#     subtitle = strata_nme,
+#     caption = paste0("Demography Adjusted Model (", mdl_nme, ")")
+#   )
+# 
+# cxph_adj_full_plts[[adj_mdl_nme]] <-
+#   plot_sdc_smooth_survfit(
+#     survfit_obj = cxph_adj_full_mdls[[adj_mdl_nme]],
+#     type = "risk",
+#     method = "loess",
+#     span = 0.75,
+#     add_noise = FALSE,
+#     subtitle = strata_nme,
+#     caption = paste0("Fully Adjusted Model (", mdl_nme, ")")
+#   )
+
+# For stronger smoothing, try span = 0.9. For GAM smoothing instead of LOESS:
+# plot_sdc_smooth_survfit(
+#   survfit_obj = all_klpn_mdls[[i]],
+#   type = "risk",
+#   method = "gam",
+#   formula = y ~ s(x, bs = "cs"),
+#   method.args = list(method = "REML"),
+#   subtitle = paste0(names(covar_all[i]))
+# )
+```
+
+# Kaplan-Meier Plots
+
+## Risk (%)
+Risk is plotted because it is easy to zoom into its y values
+```{r}
+
+# probability of being on the CPR at each age
+## All potential exposures
+
+covar_all[[14]]
+covar_all |> names()
+
+for(i in seq_along(covar_all)) {
+
+  if (i == 1) {
+    print(Sys.time())
+    tictoc::tic()
+    
+    #     No. of surv models
+    tbl_cnt <- length(covar_all)
+    
+    all_klpn_mdls = list()
+    all_klpn_tbls = list()
+    all_klpn_plts = list()
+    gt_suvfit_tbl = list()
+      
+    #make outputs directory (if it doesn't already exist)
+    unadj_surv_plts <- "outputs\\rsk_plts_unadjs_sdc"
+    
+    if (!dir.exists(unadj_surv_plts)) {
+      dir.create(unadj_surv_plts)
+    }
+    
+  }
+
+  kp_fmla = paste0("\nsurvival::Surv(c_age_1st_evnt, c_frst_cpr) ~ ", covar_all[[i]])
+  cat("\nFormula", kp_fmla)
+  cat("\n\tPlotting", covar_all[i], "...\n")
+  
+  #   create model
+  all_klpn_mdls[[paste0(covar_all[i])]] <-
+    ggsurvfit::survfit2(as.formula(kp_fmla),
+                        data = ehr_cpr_cens11_cohrt)
+  
+#   publish survfit table
+    # NOT NOW NEEDED DUE TO SAILS SDC 
+  # gt_suvfit_tbl[[paste0(covar_all[i])]] <- 
+  # gtsummary::tbl_survfit(
+  #   all_klpn_mdls[[i]],
+  #   times = seq.int(1,11,2),
+  #   estimate_fun = label_style_percent(digits = 1),
+  #   label = var_list_full,
+  #   label_header = "**{time} Years**"
+  # )
+  
+  #   tidy tables of the model, for flexible plotting elsewhere
+  # NOT NOW NEEDED DUE TO SAILS SDC 
+  # all_klpn_tbls[[paste0(covar_all[i])]] <-
+  #   all_klpn_mdls[[i]] %>%
+  #   tidy_survfit()
+  
+  #   create plots from models
+  ## CURVES NOT SMOOTHED
+  # all_klpn_plts[[paste0(covar_all[i])]] <-
+  #   all_klpn_mdls[[i]] %>%
+  #   #     risk plots can be replaced with  Cummulative hazard ("cumhaz") or survival probability ("survival") plots
+  #   ggsurvfit::ggsurvfit(type = "risk") +
+  #   add_confidence_interval() +
+  #   stat_smooth(x = "time", y = "estimate") +
+  #   # add_censor_mark(stroke = 0.3, alpha = 0.5) + #offed cos of SDC
+  #   scale_ggsurvfit() +
+  #   add_pvalue("annotation") +
+  #   labs(subtitle = paste0(names(covar_all[i])),
+  #        y = "% Risk (CPR Registration)",
+  #        x = "Follow-up Age (years)")
+  
+  ## CURVES NOW SMOOTHED
+  all_klpn_plts[[paste0(covar_all[i])]] <-
+  plot_sdc_smooth_survfit(
+    survfit_obj = all_klpn_mdls[[i]],
+    type = "risk",
+    method = "loess",
+    span = 0.15, #reduce to reduce smoothing
+    smooth_n = 25, #tends to affect the CIs
+    add_noise = T,
+    noise_scope = "tail",
+    noise_tail_n = 3,
+    noise_sd = 0.00005,
+    show_ci = T,
+    subtitle = paste0(names(covar_all[i]))
+  ) +
+    ggplot2::scale_x_continuous(#limits = c(0,11),
+                                breaks = seq.int(0,10,2),
+                                expand = expansion(add = 0.1)
+                                )
+
+  #   adjust plot's y coordinates of relevant exposures (by zooming)
+  if (covar_all[[i]] %in% c("m_mar_status")) {
+    all_klpn_plts[[i]] <-
+      all_klpn_plts[[i]] + coord_cartesian(ylim = c(0, 0.175))
+  }
+  if (covar_all[[i]] == "m_fam_status") {
+    all_klpn_plts[[i]] <-
+      all_klpn_plts[[i]] + coord_cartesian(ylim = c(0, 0.05))#
+  }
+  if (covar_all[[i]] == "m_ethnic") {
+    all_klpn_plts[[i]] <-
+      all_klpn_plts[[i]] + coord_cartesian(ylim = c(0, 0.035))
+  }
+  if (covar_all[[i]] == "c_ethn") {
+    all_klpn_plts[[i]] <-
+      all_klpn_plts[[i]] + coord_cartesian(ylim = c(0, 0.027))
+  }
+  if (covar_all[[i]] == "m_hh_deprv_no") {
+    all_klpn_plts[[i]] <-
+      all_klpn_plts[[i]] + coord_cartesian(ylim = c(0, 0.1)) #8
+  }
+  if (covar_all[[i]] == "m_hh_deprv_dms") {
+    all_klpn_plts[[i]] <-
+      all_klpn_plts[[i]] + coord_cartesian(ylim = c(0, 0.1)) #8
+  }
+  if (covar_all[[i]] == "c_cgm") {
+    all_klpn_plts[[i]] <-
+      all_klpn_plts[[i]] + coord_cartesian(ylim = c(0, 0.03))
+  }
+  
+  #   format output file name by removing spaces, this also ensures no new output directory is accidentally created
+  fle_nme <- str_replace_all(names(covar_all[i]), "[ |\\/|\\\\]", "_")
+  
+  #   plots needing wider width
+  if (covar_all[[i]] %in% c("m_fam_status", "m_mar_status")) {
+    wdth = 20
+  } else if (covar_all[[i]] %in% c("m_hh_deprv_dms", "m_ethnic")) {
+    wdth = 25
+  }
+  else{
+    wdth = 15
+  }
+
+  cat("\n\tSaving plot...")
+  
+  ggsave(
+    filename = paste0(unadj_surv_plts, "\\", fle_nme, ".png"),
+    plot = all_klpn_plts[[i]],
+    scale = 0.9,
+    height = 15,
+    width = wdth,
+    units = 'cm',
+    dpi = 600
+  )
+  
+  if (i == tbl_cnt) {
+    # TIDY TABLES NO LONGER SAVED BECAUSE WILL NOT PASS SAIL'S SDC
+#     cat("\nSaving tidy tables of all plots ...\n")
+# 
+# #     save publication-ready table as word doc
+#     gtsummary::tbl_stack(gt_suvfit_tbl)%>% 
+#   as_gt() %>% 
+#   gt::tab_header(title = gt::md("CPR Survival estimates of the study population for each exposure (unadjusted)")) %>% 
+#   ## convert output to a gt table for onward saving.
+#   gt::gtsave(paste0(unadj_surv_plts,"\\kpln_mr_plt_estimates_all.docx"))
+    
+    print(Sys.time())
+    print(tictoc::toc())
+    
+    cat("\nSaving workspace ...\n")
+    rm(tbl_cnt, fct_no, fle_nme, kp_fmla)
+    gc()
+    # save.image()
+  }
+  
+}
+
+# all_klpn_tbls[[1]]
+
+```
+
+
+# CoxPH Regression
+
+## Bivariate (unadjusted) models
+
+This should come first because it inform what variables to stratiy the kaplan-meier
+plots
+
+```{r}
+# ehr_cpr_cens11_cohrt %>% glimpse
+
+# list all potantial exposures/covariates
+covar_all <- c(
+    "Child Sex" = "c_sex",
+    "Child ethnicity"="c_ethn",
+    "Child congenital anomalies"="c_cgm",
+    "Child preterm birth"="c_ptb",
+    "Child birth weight"="c_bw",
+    "Mother age at birth (category)"="m_age_cat",
+    "Mother ethnicity"="m_ethnic",
+    "Mother eductation"="m_edu",
+    "Mother HH dependent children"="m_hh_child_depndt",
+    "Mother HH adults"="m_hh_adult",
+    "Mother marital status"="m_mar_status",
+    "Mother family status"="m_fam_status",
+    "Mother length of UK stay"="m_uk_stay_len",
+    "Mother HH deprivation count"="m_hh_deprv_no",
+    "Mother HH deprivation dimensions"="m_hh_deprv_dms",
+    "Mother Townsend 2011 quintile"="m_twns2011",
+    "Mother alcohol problems"="m_alc",
+    "Mother learning difficulties/disabilities"="m_lrn",
+    "Mother mental health issues"="m_mnt",
+    "Mother substance use"="m_sbm",
+    "Mother smoking"="m_smk"
+    )
+
+# make formula
+for(i in seq_along(covar_all)) {
+  if (i == 1) {
+    cx_mdl_ft_a <- list()
+    mdl_params_a <- list()
+  }
+  
+  #   prep formula
+  frml_a <- as.formula(paste0("Surv(c_age_1st_evnt, c_frst_cpr) ~ ", covar_all[[i]]))
+  
+  cat("\nModel", i, "\n")
+  print(frml_a)
+  
+  #     fit bivariate survival model
+  cx_mdl_ft_a[[covar_all[[i]]]] <- survival::coxph(formula = frml_a,
+                                      data    = ehr_cpr_cens11_cohrt,
+                                      id      = c_alf_pe)
+  
+  cat("Processing model parameters...")
+  #     obtain and process counts per group
+  var_cat_cnt <-
+    ehr_cpr_cens11_cohrt %>%
+    select(covar_all[[i]]) %>%
+    na.omit() %>% #because analysis is often for complete cases
+    frq(get(covar_all[[i]])) %>%
+    data.frame() %>%
+    select(val, frq) %>%
+    mutate(val = as.character(val))
+  
+  #     obtain and process model parameters
+  mdl_params_a[[names(covar_all[i])]] <-
+    model_parameters(
+      cx_mdl_ft_a[[i]],
+      #18, 9
+      exponentiate = T,
+      include_info = T,
+      pretty_names = F,
+      include_reference = T
+    ) %>%
+    mutate(Parameter = str_replace_all(Parameter, covar_all[[i]], ""),
+           group = covar_all[[i]]) %>%
+    left_join(var_cat_cnt, by = c("Parameter" = "val")) %>%
+    relocate(group)
+  
+  if (i == length(covar_all)) {
+    cat("Saving all model tables as csv...")
+    
+    mdl_params_a_df <- bind_rows(mdl_params_a, .id = "Exposure") %>%
+      select(-c(z, df_error)) %>% 
+      mutate(sig = case_when( p < 0.001 ~ "***",
+                              p < 0.01 ~ "**",
+                              p < 0.05 ~ "*",
+                              p < 0.1 ~ "."
+                              )
+             ) %>% 
+      write_csv(file = "outputs\\bivar_coxph_cpr_all.csv")
+    print(mdl_params_a_df, n = 100)
+    
+#     clean workspace
+    rm(var_cat_cnt)
+  }
+}
+
+# obtain performance stats from the survival models
+## tabulate the performance of multiple models
+compare_performance(cx_mdl_ft_a) %>%
+  write_csv(file = "outputs\\bivar_coxph_cpr_perf.csv")
+
+# tabulate bivariate models using gtsummary
+
+# for renaming variables
+mdl_tab_lbl <- list(
+# dummy
+    # "dummy"              = "Total",
+    # child baseline measures
+    "c_brth_yr_cat" = "Child birth year",
+    "c_sex"              = "Child sex",
+    "c_ethn"             = "Child ethnicity",
+    "c_ptb"              = "Child preterm birth",
+    "c_bw"               = "Child birth weight",
+    "c_cgm"              = "Child congenital anomalies",
+    "c_CHILD_PROTECTION_REGISTER" = "Child CPR registration",
+    "c_frst_evnt_cat" = "Child 1st event",
+    "c_age_1st_evnt" = "Child median age at CPR registration",
+    "m_age_cat"          = "Mother age at birth (category)",
+    "m_lrn"              = "Mother learning difficulties/disabilities",
+    "m_smk"              = "Mother smoking",
+    "m_alc"              = "Mother alcohol problems",
+    "m_mnt"              = "Mother mental health issues",
+    "m_htn"              = "Mother hypertension",
+    "m_sbm"              = "Mother substance use",
+    "m_ethnic"           = "Mother ethnicity",
+    "m_edu"             = "Mother eductation",
+    "m_hh_child_depndt"  = "Mother HH dependent children",
+    "m_hh_adult"         = "Mother HH adults",
+    "m_mar_status"       = "Mother marital status",
+    "m_fam_status" = "Mother family status",
+    "m_uk_stay_len"      = "Mother length of UK stay",
+    "m_hh_deprv_no"      = "Mother HH deprivation count",
+    "m_hh_deprv_dms"     = "Mother HH deprivation dimensions",
+    # "m_wimd2014"         = "Mother WIMD 2014 quintile",
+    "m_twns2011"         = "Mother Townsend 2011 quintile"
+)
+
+# the following chunk is as after taught, otherwise could have been merged with the main loop above.
+for(i in seq_along(cx_mdl_ft_a)) {
+  if (i == 1) {
+    bivar_mdl_tbl <- list()
+  }
+  bivar_mdl_tbl[[names(cx_mdl_ft_a[i])]] <-
+    gtsummary::tbl_regression(cx_mdl_ft_a[[i]],
+                              exponentiate = T,
+                              label = mdl_tab_lbl
+                              ) %>%
+    bold_labels() %>%
+    add_significance_stars(hide_ci = F, hide_se = T)
+}
+
+# stack and export preped table
+tbl_stack(bivar_mdl_tbl, group_header = NULL) %>% 
+  as_gt() %>% 
+  gt::tab_header(title = gt::md("Survival Models of CPR Registration: Unadjusted Hazard Ratios")) %>% 
+  #convert output to a gt table for onward saving.
+  gt::gtsave("outputs\\coxph_bivar_mdl_tbl_all.docx")
+
+
+# print only fitted formula fit for documentation
+for(i in seq_along(cx_mdl_ft_a)) {
+
+  #   bivariate formula
+  frml_a <- as.formula(paste0("Surv(c_age_1st_evnt, c_frst_cpr) ~ ", covar_all[[i]]))
+  
+  cat("\nModel", names(cx_mdl_ft_a[i]), "\n")
+  print(frml_a)
+}
+
+```
+
+## Multivariate demog Models
+Child ethnicity is prefered to mothers ethnicity because a mother can have children with different ethnicities if for examples she's had more than one husbands.
+```{r}
+ehr_cpr_cens11_cohrt %>% glimpse
+
+# Demographic Models
+covar_demo2a <- c(
+    "c_sex",
+    "c_ethn",
+    "m_age_cat",
+    "m_edu",
+    "m_hh_child_depndt",
+    "m_hh_adult",
+    "m_mar_status", #**
+    # "m_uk_stay_len",
+    "m_hh_deprv_no" #**
+    )
+
+# swaped "m_hh_deprv_no" with "m_hh_deprv_dms"
+covar_demo2b <- c(
+    "c_sex",
+    "c_ethn",
+    "m_age_cat",
+    "m_edu",
+    "m_hh_child_depndt",
+    "m_hh_adult",
+    "m_mar_status", #**
+    # "m_uk_stay_len",
+    "m_hh_deprv_dms" #**
+    )
+
+# named list with exposure of models with only demographic variables
+cx_mdls_multi_vars <-
+  list(demo2a=covar_demo2a,
+       demo2b=covar_demo2b#,
+       )
+cx_mdls_multi_vars
+
+# access name
+names(cx_mdls_multi_vars[1])
+
+# Fit models (based on prepped formula)
+for(i in seq_along(cx_mdls_multi_vars)) {
+  if (i == 1) {
+    cx_mdl_multi <- list()
+    mdl_params_multi <- list()
+  }
+  
+  #   prep formula, fit models, process & output coefficients
+  frml_multi <- as.formula(paste0(
+    "Surv(c_age_1st_evnt, c_frst_cpr) ~ ",
+    paste(cx_mdls_multi_vars[[i]], collapse = " + ")
+  ))
+  
+  cat("\nModel", names(cx_mdls_multi_vars[i]), "\n")
+  print(frml_multi)
+  
+  cx_mdl_multi[[names(cx_mdls_multi_vars[i])]] <- survival::coxph(formula = frml_multi,
+                                       data    = ehr_cpr_cens11_cohrt,
+                                       id      = c_alf_pe)
+  
+  cat("Processing model parameters...")
+  # #     obtain and process counts per group
+  vars_frq_cnt <-
+    ehr_cpr_cens11_cohrt %>%
+    select(c_age_1st_evnt, c_frst_cpr, cx_mdls_multi_vars[[i]]) %>% #added outcomes so that complete case analysis (via NA omit) mirrors actual model implementation
+    na.omit() %>% #because analysis is often for complete cases
+    gtsummary::tbl_summary(
+      type = list(where(is.logical) ~ "categorical",
+                  all_dichotomous() ~ "categorical"),
+      missing_text = "Missing",
+      statistic = list(
+        all_continuous() ~ "{median} ({p25}, {p75})",
+        all_categorical() ~ "{n} ({p}%)"
+        # all_categorical(is.na) ~ "{p_miss}"
+      ),
+      digits = everything() ~ c(0, 2)
+    ) %>%
+    .$table_body %>%
+    filter(row_type == "level") %>%
+    mutate(Parameter = paste0(variable, label)) %>%
+    select(Parameter, variable, label, n_perc = stat_0)
+  
+  #     obtain and process model parameters
+  mdl_params_multi[[names(cx_mdls_multi_vars[i])]] <-
+    model_parameters(
+      cx_mdl_multi[[i]],
+      #18, 9
+      exponentiate = T,
+      include_info = T,
+      pretty_names = T,
+      include_reference = T
+    ) %>%
+    left_join(vars_frq_cnt, by = "Parameter") %>%
+    select(-c(Parameter, df_error)) %>% #drop no longer needed join column
+    relocate(variable, label)
+  
+  if (i == length(cx_mdls_multi_vars)) {
+    # lastly, save list of multiple models to xlsx workbook file in batch
+    # save list of named dataframes as xlsx with one df per sheet
+    writexl::write_xlsx(mdl_params_multi, path = "outputs\\multivar_coxph_cpr_demo.xlsx")
+  
+    # tabulate the performance of multiple models
+  compare_performance(cx_mdl_multi) %>% 
+  write_csv(file = "outputs\\multivar_coxph_cpr_demo_perf.csv")
+    }
+}
+
+# model diagnosis
+check_model(cx_mdl_multi[[1]], residual_type
+  = "normal")
+
+# tabulate models
+for(i in seq_along(cx_mdl_multi)) {
+  if (i == 1) {
+    demog_mdl_tbl <- list()
+  }
+  demog_mdl_tbl[[names(cx_mdl_multi[i])]] <-
+    gtsummary::tbl_regression(cx_mdl_multi[[i]],
+                              exponentiate = T,
+                              label = mdl_tab_lbl
+                              ) %>%
+    bold_labels() %>%
+    add_significance_stars(hide_ci = F, hide_se = T)
+}
+
+# stack and export preped table
+tbl_merge(demog_mdl_tbl, tab_spanner = paste("Model", seq.int(1,length(demog_mdl_tbl)))) %>% 
+  as_gt() %>% 
+  gt::tab_header(title = gt::md("Survival Models of CPR Registration: Demography adjusted Hazard Ratios")) %>% 
+  #convert output to a gt table for onward saving.
+  gt::gtsave("outputs\\coxph_demog_mdl_tbl_all.docx")
+
+# print only fitted formula fit for documentation
+for(i in seq_along(cx_mdls_multi_vars)) {
+    #   prep formula, fit models, process & output coefficients
+  frml_multi <- as.formula(paste0(
+    "Surv(c_age_1st_evnt, c_frst_cpr) ~ ",
+    paste(cx_mdls_multi_vars[[i]], collapse = " + ")
+  ))
+  
+  cat("\nModel", names(cx_mdls_multi_vars[i]), "\n")
+  print(frml_multi)
+}
+```
+**demographic Models fit**
+
+Model demo2a: 
+Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + 
+    m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_no
+
+Model demo2b: 
+Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + 
+    m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_dms
+
+
+## Multivariate full Models
+
+I take Demographic models 2a & 2b and add all perinatal factors to each. Demog models
+
+```{r}
+
+ehr_cpr_cens11_cohrt %>% 
+  glimpse
+
+# full models
+covar_full2a <- c(
+    "c_sex",
+    "c_ethn",
+    "m_age_cat",
+    "m_edu",
+    "m_hh_child_depndt",
+    "m_hh_adult",
+    "m_mar_status", #**
+    # "m_uk_stay_len",
+    "m_hh_deprv_no", #**
+        "c_cgm",
+    "c_ptb",
+    "c_bw",
+    "m_alc",
+    "m_lrn",
+    "m_mnt",
+    "m_sbm",
+    "m_smk"
+    )
+
+# swaped "m_hh_deprv_no" with "m_hh_deprv_dms"
+covar_full2b <- c(
+    "c_sex",
+    "c_ethn",
+    "m_age_cat",
+    "m_edu",
+    "m_hh_child_depndt",
+    "m_hh_adult",
+    "m_mar_status", #**
+    # "m_uk_stay_len",
+    "m_hh_deprv_dms", #**
+        "c_cgm",
+    "c_ptb",
+    "c_bw",
+    "m_alc",
+    "m_lrn",
+    "m_mnt",
+    "m_sbm",
+    "m_smk"
+    )
+
+# named list with exposure of models with only demographic variables
+cx_mdls_multi_full <-
+  list(full_2a=covar_full2a,
+       full_2b=covar_full2b#,
+       # full_2c=covar_full2c,
+       # full_2d=covar_full2d
+       )
+
+cx_mdls_multi_full
+
+# access name
+names(cx_mdls_multi_full[2])
+
+# make formula
+for(i in seq_along(cx_mdls_multi_full)) {
+  if (i == 1) {
+    cx_mdl_multi_full <- list()
+    mdl_params_multi_full <- list()
+    ehr_cpr_cens11_cohrt <- as.data.frame(ehr_cpr_cens11_cohrt)
+  }
+  
+  #   prep formula, fit models, process & output coefficients
+  frml_multi_full <- as.formula(paste0(
+    "Surv(c_age_1st_evnt, c_frst_cpr) ~ ",
+    paste(cx_mdls_multi_full[[i]], collapse = " + ")
+  ))
+  
+  cat("\nModel", names(cx_mdls_multi_full[i]), "\n")
+  print(frml_multi_full)
+  
+  cx_mdl_multi_full[[names(cx_mdls_multi_full[i])]] <-
+    survival::coxph(formula = frml_multi_full,
+                    data    = ehr_cpr_cens11_cohrt,
+                    id      = c_alf_pe)
+  
+  cat("Processing model parameters...")
+  # #     obtain and process counts per group
+  vars_frq_cnt_full <-
+    ehr_cpr_cens11_cohrt %>%
+    select(c_age_1st_evnt, c_frst_cpr, cx_mdls_multi_full[[i]]) %>% #added outcomes so that complete case analysis (via NA omit) mirrors actual model implementation
+    na.omit() %>% #because analysis is often for complete cases
+    gtsummary::tbl_summary(
+      type = list(
+        where(is.logical) ~ "categorical",
+        all_dichotomous() ~ "categorical"
+      ),
+      missing_text = "Missing",
+      statistic = list(
+        all_continuous() ~ "{median} ({p25}, {p75})",
+        all_categorical() ~ "{n} ({p}%)"
+        # all_categorical(is.na) ~ "{p_miss}"
+      ),
+      digits = everything() ~ c(0, 2)
+    ) %>%
+    .$table_body %>%
+    filter(row_type == "level") %>%
+    mutate(Parameter = paste0(variable, label) %>% str_squish()) %>%
+    select(Parameter, variable, label, n_perc = stat_0) #%>%
+  # View("cnt_full")
+  
+  #     obtain and process model parameters
+  mdl_params_multi_full[[names(cx_mdls_multi_full[i])]] <-
+    model_parameters(
+      cx_mdl_multi_full[[i]],
+      #18, 9
+      exponentiate = T,
+      include_info = T,
+      pretty_names = T,
+      include_reference = T
+    ) %>%
+    mutate(Parameter = str_squish(Parameter)) %>%
+    left_join(vars_frq_cnt_full, by = "Parameter") %>%
+    select(-c(z, df_error)) %>%
+    relocate(variable, label)
+  
+  if (i == length(cx_mdls_multi_full)) {
+    # lastly, save list of multiple models to xlsx workbook file in batch
+    # save list of named dataframes as xlsx with one df per sheet
+    writexl::write_xlsx(mdl_params_multi_full, path = "outputs\\multivar_coxph_cpr_full.xlsx")
+    
+    # tabulate performance of multiple models
+  compare_performance(cx_mdl_multi_full) %>% 
+  write_csv(file = "outputs\\multivar_coxph_full_cpr_perf.csv")
+  # This shows that model 2 hasa the greatest explanatory power.
+  }
+}
+
+# model diagnosis
+check_model(cx_mdl_multi_full[[1]], residual_type
+  = "normal")
+
+# tabulate fully adjusted models
+for(i in seq_along(cx_mdl_multi_full)) {
+  if (i == 1) {
+    fll_adj_mdl_tbl <- list()
+  }
+  fll_adj_mdl_tbl[[names(cx_mdl_multi_full[i])]] <-
+    gtsummary::tbl_regression(cx_mdl_multi_full[[i]],
+                              exponentiate = T,
+                              label = mdl_tab_lbl
+                              ) %>%
+    bold_labels() %>%
+    add_significance_stars(hide_ci = F, hide_se = T)
+}
+
+# stack and export preped table
+tbl_merge(fll_adj_mdl_tbl, tab_spanner = paste("Model", seq.int(1,length(fll_adj_mdl_tbl)))) %>% 
+  as_gt() %>% 
+  gt::tab_header(title = gt::md("Survival Models of CPR Registration: Fully adjusted Hazard Ratios")) %>% 
+  #convert output to a gt table for onward saving.
+  gt::gtsave("outputs\\coxph_full_adj_mdl_tbl_all.docx")
+
+
+# print only formula to fit for documentation
+for(i in seq_along(cx_mdls_multi_full)) {
+    #   prep formula, fit models, process & output coefficients
+  frml_multi <- as.formula(paste0(
+    "Surv(c_age_1st_evnt, c_frst_cpr) ~ ",
+    paste(cx_mdls_multi_full[[i]], collapse = " + ")
+  ))
+  
+  cat("\nModel", names(cx_mdls_multi_full[i]), "\n")
+  print(frml_multi)
+}
+
+```
+Model full_2a: 
+Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + 
+    m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_no + 
+    c_cgm + c_ptb + c_bw + m_alc + m_lrn + m_mnt + m_sbm + m_smk
+
+Model full_2b: 
+Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + 
+    m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_dms + 
+    c_cgm + c_ptb + c_bw + m_alc + m_lrn + m_mnt + m_sbm + m_smk
+
+## Model tabulations (focused on main exposures)
+```{r}
+# fitted model objects (named lists)
+## Unadjusted models
+names(cx_mdl_ft_a)
+
+## demography adjusted models
+names(cx_mdl_multi)
+
+## fully adjusted models
+names(cx_mdl_multi_full)
+
+# tabulation 1
+# m_hh_deprv_no + demo2a + full_2a
+mdl_tbl_1 <- list()
+mdl_tbl_1[["Unadjusted"]] <- 
+gtsummary::tbl_regression(cx_mdl_ft_a[["m_hh_deprv_no"]],
+                          exponentiate = T,
+                          label = mdl_tab_lbl) %>% 
+  bold_labels() %>% 
+  add_significance_stars(hide_ci = F, hide_se = T) #%>%
+
+# mdl_tbl_1[["Unadjusted"]]
+
+mdl_tbl_1[["aHR 1"]] <- 
+gtsummary::tbl_regression(cx_mdl_multi[["demo2a"]],
+                          exponentiate = T,
+                          label = mdl_tab_lbl) %>% 
+  bold_labels() %>%
+  add_significance_stars(hide_ci = F, hide_se = T) #%>% 
+  # add_global_p(test = "Wald") %>% 
+
+mdl_tbl_1[["aHR 2"]] <- 
+gtsummary::tbl_regression(cx_mdl_multi_full[["full_2a"]],
+                          exponentiate = T,
+                          label = mdl_tab_lbl) %>% 
+  bold_labels() %>%
+  add_significance_stars(hide_ci = F, hide_se = T) %>% 
+  # add_global_p(test = "Wald") %>% 
+  add_n(location = "level") #%>% 
+  # add_nevent(location = "level") #removed to motigate small numbers
+
+mdl_tbl_1_all <- 
+  tbl_merge(
+    tbls = mdl_tbl_1,
+    tab_spanner = c("**Unadjusted**",
+                    "**Demography adjusted**",
+                    "**Fully adjusted**"),
+    quiet = T
+  ) %>% 
+  as_gt() %>% #convert output to a gt table for onward saving.
+  gt::tab_header(title = gt::md("Progressively Adjusted Survival Models of CPR Registration (A): Focusing on HH Deprivation Count")) %>% 
+  gt::gtsave("outputs\\coxph_mdl_tbl_1_all.docx")
+
+# tabulation 3
+# m_hh_deprv_dms + demo2b + full_2b
+mdl_tbl_3 <- list()
+mdl_tbl_3[["Unadjusted"]] <-
+  gtsummary::tbl_regression(cx_mdl_ft_a[["m_hh_deprv_dms"]],
+                            exponentiate = T,
+                            label = mdl_tab_lbl) %>%
+  bold_labels() %>%
+  add_significance_stars(hide_ci = F, hide_se = T)
+
+mdl_tbl_3[["aHR 1"]] <-
+  gtsummary::tbl_regression(cx_mdl_multi[["demo2b"]],
+                            exponentiate = T,
+                            label = mdl_tab_lbl) %>%
+  bold_labels() %>%
+  add_significance_stars(hide_ci = F, hide_se = T)
+
+mdl_tbl_3[["aHR 2"]] <-
+  gtsummary::tbl_regression(cx_mdl_multi_full[["full_2b"]],
+                            exponentiate = T,
+                            label = mdl_tab_lbl) %>%
+  bold_labels() %>%
+  add_significance_stars(hide_ci = F, hide_se = T) %>%
+  add_n(location = "level") #%>%
+  # add_nevent(location = "level")
+
+# merge tables and export as docx
+mdl_tbl_3_all <-
+  tbl_merge(
+    tbls = mdl_tbl_3,
+    tab_spanner = c(
+      "**Unadjusted**",
+      "**Demography adjusted**",
+      "**Fully adjusted**"
+    ),
+    quiet = T
+  ) %>%
+  as_gt() %>% #convert output to a gt table for onward saving.
+    gt::tab_header(title = gt::md("Progressively Adjusted Survival Models of CPR Registration (A): Focusing on HH Deprivation Dimensions")) %>%
+  gt::gtsave("outputs\\coxph_mdl_tbl_3_all.docx")
+
+# gc()
+# save.image()
+
+```
+
+# Diagnostics of the Cox PH Models
+
+## Bivariate models
+```{r}
+
+# cx_mdl_ft_a
+
+length(cx_mdl_ft_a)
+
+# model names
+names(cx_mdl_ft_a)
+
+# drop lenght of stay in uk from this batch for easy plotting
+length(cx_mdl_ft_a[names(cx_mdl_ft_a) != "m_uk_stay_len"])
+
+# covariate/exposure names
+covar_all[[1]]
+
+# test proportional hazard assumption
+for(i in seq_along(cx_mdl_ft_a)) {
+  if (i == 1) {
+    # bivar_mdl_plt_lst <- list()
+    bivar_zph_lvl_tbl_lst <- list()
+    bivar_zph_plt_lst <- list()
+    
+  }
+  
+  cat("\nModel", names(cx_mdl_ft_a[i]), "diagnostics...\n")
+
+  ftst <- cox.zph(cx_mdl_ft_a[[i]])
+  # ftst
+  
+  ## for each category/level
+  ftst_lvl <- cox.zph(cx_mdl_ft_a[[i]],
+                    terms = F)
+  # ftst_cat
+
+  cat("\tProcessing parameters from model diagnosis...\n")
+  # #     obtain and process counts per group
+  vars_frq_cnt_full <-
+    ehr_cpr_cens11_cohrt %>%
+    select(c_age_1st_evnt, c_frst_cpr, covar_all[[i]]) %>% #added outcomes so that complete case analysis (via NA omit) mirrors actual model implementation
+    na.omit() %>% #because analysis is often for complete cases
+    gtsummary::tbl_summary(
+      type = list(
+        where(is.logical) ~ "categorical",
+        all_dichotomous() ~ "categorical"
+      ),
+      missing_text = "Missing",
+      statistic = list(
+        all_continuous() ~ "{median} ({p25}, {p75})",
+        all_categorical() ~ "{n} ({p}%)"
+        # all_categorical(is.na) ~ "{p_miss}"
+      ),
+      digits = everything() ~ c(0, 2)
+    ) %>%
+    .$table_body %>%
+    filter(row_type == "level") %>%
+    mutate(Parameter = paste0(variable, label) %>% str_squish()) %>%
+    select(Parameter, variable, label, n_perc = stat_0)
+
+  ## per level
+  bivar_zph_lvl_tbl_lst[[names(cx_mdl_ft_a[i])]] <-
+    vars_frq_cnt_full %>%
+    full_join(ftst_lvl$table %>%
+                as_tibble(rownames = "Parameter"), by = "Parameter") %>%
+    relocate(variable, label)
+  
+  cat("\tProducing model diagnosis...\n")
+  
+  # this produces a list of plots (based on the number of covariates)
+  mdl_ftst <- ggcoxzph(ftst, resid = F)
+  
+#   obtain plot with inner list
+  bivar_zph_plt_lst[[names(cx_mdl_ft_a[i])]] <- 
+    mdl_ftst[[1]]
+  
+  if (i == length(cx_mdl_ft_a)) {
+
+    cat("Saving parameters of all model diagnosis...\n")
+
+    writexl::write_xlsx(bivar_zph_lvl_tbl_lst, path = "outputs\\bivar_cpr_zph_lvl_tbls.xlsx")
+    
+    cat("Consolidating & saving all plots of model diagnosis...\n")
+    #   consolidate/mosaic all plots of bivar coxph models
+
+  bivar_zph_plt <-
+    wrap_plots(bivar_zph_plt_lst[names(bivar_zph_plt_lst) != "m_uk_stay_len"],
+               ncol = 4,
+               nrow = 5,
+               tag_level = 'keep',
+    ) +
+    plot_annotation(
+      subtitle = paste0("Bivariate model ", "diagnostics"),
+      tag_levels = 'A'
+    )
+
+  ggsave(
+    filename = paste0("outputs\\zph_bivar_","plts.png"),
+    plot = bivar_zph_plt,
+    height = 50,
+    width = 50,
+    units = 'cm',
+    dpi = 600
+  )
+  
+#     cleanup workspace
+    rm(ftst, ftst_lvl, vars_frq_cnt_full, mdl_ftst)
+  }
+}
+
+gc()
+save.image()
+```
+
+## Multivariate Demog models
+
+In these results, variables whose p values are significant (i.e. = 0.1) violate the
+HR assumption of being constant through time. They are therefore better fit using
+discrete time or time varying models since their HR varies with time.
+
+```{r}
+
+names(cx_mdl_multi)
+cx_mdls_multi_vars[[1]]
+
+# test proportional hazard assumption
+for(i in seq_along(cx_mdl_multi)) {
+  if (i == 1) {
+    demo_zph_tbl_lst <- list()
+    demo_zph_lvl_tbl_lst <- list()
+    demo_zph_plt_lst <- list()
+    
+  }
+  
+  cat("\nModel", names(cx_mdl_multi[i]), "diagnostics...\n")
+  #   perform test (on each model)
+   ## for each variable
+  ftst <- cox.zph(cx_mdl_multi[[i]])
+  # ftst
+  
+  ## for each category/level
+  ftst_lvl <- cox.zph(cx_mdl_multi[[i]],
+                    terms = F)
+  # ftst_cat
+
+  cat("\tProcessing parameters from model diagnosis...\n")
+  # #     obtain and process counts per group
+  vars_frq_cnt_full <-
+    ehr_cpr_cens11_cohrt %>%
+    select(c_age_1st_evnt, c_frst_cpr, cx_mdls_multi_vars[[i]]) %>% #added outcomes so that complete case analysis (via NA omit) mirrors actual model implementation
+    na.omit() %>% #because analysis is often for complete cases
+    gtsummary::tbl_summary(
+      type = list(
+        where(is.logical) ~ "categorical",
+        all_dichotomous() ~ "categorical"
+      ),
+      missing_text = "Missing",
+      statistic = list(
+        all_continuous() ~ "{median} ({p25}, {p75})",
+        all_categorical() ~ "{n} ({p}%)"
+        # all_categorical(is.na) ~ "{p_miss}"
+      ),
+      digits = everything() ~ c(0, 2)
+    ) %>%
+    .$table_body %>%
+    filter(row_type == "level") %>%
+    mutate(Parameter = paste0(variable, label) %>% str_squish()) %>%
+    select(Parameter, variable, label, n_perc = stat_0)
+
+  #   extract tables from test object
+  ## per variable
+  demo_zph_tbl_lst[[names(cx_mdl_multi[i])]] <-
+    ftst$table %>%
+    as_tibble(rownames = "Variable")
+  
+  ## per level
+  demo_zph_lvl_tbl_lst[[names(cx_mdl_multi[i])]] <-
+    ftst_lvl$table %>%
+    as_tibble(rownames = "Parameter") %>% 
+      left_join(vars_frq_cnt_full, by = "Parameter") %>%
+    relocate(variable, label)
+  
+  cat("\tProducing, consolidating & saving plots of model diagnosis...\n")
+  # this produces a list of plots (based on the number of covariates)
+  mdl_ftst <- ggcoxzph(ftst, resid = F)
+
+  #   consolidate/mosaic all plots of each model
+  demo_zph_plt_lst[[names(cx_mdl_multi[i])]] <-
+    wrap_plots(mdl_ftst,
+               ncol = 2,
+               nrow = 4,
+               tag_level = 'keep',
+    ) +
+    plot_annotation(
+      subtitle = paste0("Demographic model ", as.character(i), " diagnostics"),
+      tag_levels = 'A'
+    )
+
+  ggsave(
+    filename = paste0("outputs\\zph_demo_", names(cx_mdl_multi[i]), "_plts.png"),
+    plot = demo_zph_plt_lst[[i]],
+    height = 40,
+    width = 25,
+    units = 'cm',
+    dpi = 600
+  )
+  
+  if (i == length(cx_mdl_multi)) {
+    cat("Saving parameters of all model diagnosis...\n")
+    # lastly, save list of multiple models to xlsx workbook file in batch
+    # save list of named dataframes as xlsx with one df per sheet
+    writexl::write_xlsx(demo_zph_tbl_lst, path = "outputs\\multivar_demo_cpr_zph_tbls.xlsx")
+    writexl::write_xlsx(demo_zph_lvl_tbl_lst, path = "outputs\\multivar_demo_cpr_zph_lvl_tbls.xlsx")
+    
+#     cleanup workspace
+    rm(ftst, ftst_lvl, vars_frq_cnt_full, mdl_ftst)
+  }
+}
+
+
+```
+
+## Multivariate full models
+
+In these results, variables whose p values a significant (i.e. \<= 0.1) violate the
+HR assumption of being constant through time. They are therefore better fit using
+discrete time or time varying models since their HR varies with time.
+
+```{r}
+# install.packages("ggplotify", dependencies = T)
+# library(ggplotify)
+
+names(cx_mdl_multi_full[1])
+
+# test proportional hazard assumption
+for(i in seq_along(cx_mdl_multi_full)) {
+  if (i == 1) {
+    full_zph_tbl_lst <- list()
+    full_zph_lvl_tbl_lst <- list()
+    full_zph_plt_lst <- list()
+    
+  }
+  
+  cat("\nModel", names(cx_mdls_multi_full[i]), "diagnostics...\n")
+  #   perform test (on each model)
+   ## for each variable
+  ftst <- cox.zph(cx_mdl_multi_full[[i]])
+  # ftst
+  
+  ## for each category/level
+  ftst_lvl <- cox.zph(cx_mdl_multi_full[[i]],
+                    terms = F)
+  # ftst_cat
+
+  cat("\tProcessing parameters from model diagnosis...\n")
+  # #     obtain and process counts per group
+  vars_frq_cnt_full <-
+    ehr_cpr_cens11_cohrt %>%
+    select(c_age_1st_evnt, c_frst_cpr, cx_mdls_multi_full[[i]]) %>% #added outcomes so that complete case analysis (via NA omit) mirrors actual model implementation
+    na.omit() %>% #because analysis is often for complete cases
+    gtsummary::tbl_summary(
+      type = list(
+        where(is.logical) ~ "categorical",
+        all_dichotomous() ~ "categorical"
+      ),
+      missing_text = "Missing",
+      statistic = list(
+        all_continuous() ~ "{median} ({p25}, {p75})",
+        all_categorical() ~ "{n} ({p}%)"
+        # all_categorical(is.na) ~ "{p_miss}"
+      ),
+      digits = everything() ~ c(0, 2)
+    ) %>%
+    .$table_body %>%
+    filter(row_type == "level") %>%
+    mutate(Parameter = paste0(variable, label) %>% str_squish()) %>%
+    select(Parameter, variable, label, n_perc = stat_0)
+
+  #   extract tables from test object
+  ## per variable
+  full_zph_tbl_lst[[names(cx_mdl_multi_full[i])]] <-
+    ftst$table %>%
+    as_tibble(rownames = "Variable")
+  
+  ## per level
+  full_zph_lvl_tbl_lst[[names(cx_mdl_multi_full[i])]] <-
+    ftst_lvl$table %>%
+    as_tibble(rownames = "Parameter") %>% 
+      left_join(vars_frq_cnt_full, by = "Parameter") %>%
+    relocate(variable, label)
+  
+  cat("\tProducing, consolidating & saving plots of model diagnosis...\n")
+  # this produces a list of plots (based on the number of covariates)
+  mdl_ftst <- ggcoxzph(ftst, resid = F)
+
+  #   consolidate/mosaic all plots of each model
+  full_zph_plt_lst[[names(cx_mdl_multi_full[i])]] <-
+    wrap_plots(mdl_ftst,
+               ncol = 4,
+               nrow = 4,
+               tag_level = 'keep',
+    ) +
+    plot_annotation(
+      subtitle = paste0("Full model ", as.character(i), " diagnostics"),
+      tag_levels = 'A'
+    )
+
+  ggsave(
+    filename = paste0("outputs\\zph_", names(cx_mdl_multi_full[i]), "_plts.png"),
+    plot = full_zph_plt_lst[[i]],
+    height = 40,
+    width = 50,
+    units = 'cm',
+    dpi = 600
+  )
+  
+  if (i == length(cx_mdl_multi_full)) {
+    cat("\tSaving parameters of model diagnosis...\n")
+    # lastly, save list of multiple models to xlsx workbook file in batch
+    # save list of named dataframes as xlsx with one df per sheet
+    writexl::write_xlsx(full_zph_tbl_lst, path = "outputs\\multivar_full_cpr_zph_tbls.xlsx")
+    writexl::write_xlsx(full_zph_lvl_tbl_lst, path = "outputs\\multivar_full_cpr_zph_lvl_tbls.xlsx")
+    
+#     cleanup workspace
+    rm(ftst, ftst_lvl, vars_frq_cnt_full, mdl_ftst)
+  }
+}
+
+```
+
+# Attributable Fractions
+## Unadjusted (bivariate) Models
+```{r}
+# var list
+length(covar_all)
+
+# fitted coxph model
+cx_mdl_ft_a
+
+# inner loop for each model
+for (j in seq_along(covar_all)) {
+  if (j == 1) {
+    var_no <- length(covar_all)
+    cat("No. of variables:", var_no, "\n")
+    
+    # followup years for AF computation
+    follow_up_yr <- seq.int(1, 11)
+    # follow_up_yr
+    cx_mdl_unadj_af <- list()
+    # mdl_params_multi <- list()
+    
+    #     process AF table for neatness
+    tidy_af <- function(af_objt) {
+      af_objt2 <- summary(af_objt)
+      # af_objt
+      
+      af_tbl <-
+        dplyr::bind_cols(
+          age_yr = af_objt2$times,
+          af_objt2$AF,
+          af_objt2$confidence.interval,
+          .name_repair = janitor::make_clean_names
+        )
+      
+      return(af_tbl)
+    }
+    
+    # create indicator variables of levels relevant to the AF computation &
+    #    coerce tibble to raw dataframe for the AFcoxph function
+    ehr_cpr_cens11_cohrt_indctr <-
+      ehr_cpr_cens11_cohrt %>%
+      fastDummies::dummy_cols(
+        select_columns = covar_all,
+        remove_first_dummy = F,
+        ignore_na = T
+      ) %>%
+      mutate(c_cpr_evnt = as.integer(c_cpr_evnt)) %>%
+      as.data.frame() #%>%
+      # glimpse
+    
+  }
+  
+  cat("\nAttributable Fractions for '",
+      names(covar_all[j]),
+      "'\n")
+  
+  #   extract variable
+  af_var <- covar_all[j]
+  
+  fct_lvls_x <-
+    ehr_cpr_cens11_cohrt_indctr %>%
+    #   drop original variable names
+    select(-any_of(names(ehr_cpr_cens11_cohrt))) %>% #glimpse
+    #   levels for var j
+    select(starts_with(af_var)) %>%
+    names
+  
+  cat("\n  Variable:", af_var, "\n")
+
+  for (k in seq_along(fct_lvls_x)) {
+    cat("\tLevel:", fct_lvls_x[k], "\n")
+    # replace original variable in formular j with indicator variable k in turn
+    af_fmla <-
+      cx_mdl_ft_a[[j]]$formula %>%
+      deparse1() %>%
+      str_replace(af_var, paste0("`", fct_lvls_x[k], "`")) %>%
+      #   replace logical with binary outcome variable
+      str_replace("c_frst_cpr", "c_cpr_evnt") %>%
+      as.formula()
+    
+    # print(af_fmla)
+    cat("\t", deparse1(af_fmla), "\n")
+    
+    # fit coxph for AF
+    cx_fit_1 <- coxph(formula = af_fmla,
+                      data = ehr_cpr_cens11_cohrt_indctr,
+                      ties = "breslow")
+    
+    #       helps skip AF calculation which failt
+    try({
+      # attributeable fraction calculation
+      af_cx_fit_1 <-
+        AF::AFcoxph(
+          object = cx_fit_1,
+          data = ehr_cpr_cens11_cohrt_indctr,
+          exposure = paste0(fct_lvls_x[k]),
+          # exposure = paste0(fct_lvls_x[1]),
+          times = follow_up_yr,
+          #if not, numerous calculations are made at 1 decimal place time points
+          clusterid = "c_alf_pe"
+        )
+      
+      #   concat to neat table
+      cx_mdl_unadj_af[[paste0(covar_all[j], ".", fct_lvls_x[k])]] <-
+        tidy_af(af_cx_fit_1)
+      # af_cx_fit_1_tbl
+      
+    })
+
+  }
+      
+  if (j == var_no) {
+    #     stack AF stats of all vars in this model
+    cx_mdl_unadj_af_all <-
+      bind_rows(cx_mdl_unadj_af, .id = "mdl_var")
+    
+          # save list of named dataframes as xlsx with one df per sheet
+      writexl::write_xlsx(cx_mdl_unadj_af_all, path = "outputs\\cx_mdl_unadj_af_tbls_all.xlsx")
+  }
+}
+
+save.image()
+```
+
+## Demographic Models
+
+AF computed for demographic models a & b only
+
+```{r}
+
+# make formula
+for(i in seq_along(cx_mdls_multi_vars)) {
+  if (i == 1) {
+    cx_mdl_demo_af_all <- list()
+    # mdl_params_multi <- list()
+    
+    #     process AF table for neatness
+    tidy_af <- function(af_objt) {
+      af_objt2 <- summary(af_objt)
+      # af_objt
+      
+      af_tbl <-
+        dplyr::bind_cols(
+          age_yr = af_objt2$times,
+          af_objt2$AF,
+          af_objt2$confidence.interval,
+          .name_repair = janitor::make_clean_names
+        )
+      
+      return(af_tbl)
+    }
+    
+    # flatten all list to vector, and make unique
+    demo_vars_all <- 
+      cx_mdls_multi_vars %>% 
+      list_c() %>% 
+      unique()
+    
+    # create indicator variables of levels relevant to the AF computation &
+    #    coerce tibble to raw dataframe for the AFcoxph function
+    ehr_cpr_cens11_cohrt_indctr <-
+      ehr_cpr_cens11_cohrt %>%
+      fastDummies::dummy_cols(
+        select_columns = demo_vars_all,
+        remove_first_dummy = F,
+        ignore_na = T
+      ) %>%
+      mutate(c_cpr_evnt = as.integer(c_cpr_evnt)) %>%
+      as.data.frame() #%>%
+      # glimpse
+    
+    #     track analysis progress
+    mdl_cnt <- length(cx_mdls_multi_vars)
+    cat("No. of Models:", mdl_cnt, "\n")
+  }
+  
+  cat("\n----------------------------------------\n")
+  mdl_nme <- names(cx_mdls_multi_vars[i])
+  cat("Model Name:", mdl_nme, "\n")
+  # }
+  
+  # inner loop for each model
+  for (j in seq_along(cx_mdls_multi_vars[[i]])) {
+    if (j == 1) {
+      var_no <- length(cx_mdls_multi_vars[[i]])
+      cat("No. of variables:", var_no, "\n")
+      
+      # followup years for AF computation
+      follow_up_yr <- seq.int(1, 11)
+      # follow_up_yr
+      cx_mdl_multi_demo_af <- list()
+      # mdl_params_multi <- list()
+          
+      cat("\nAttributable Fractions for model",
+          names(cx_mdls_multi_vars[i]),
+          "\n")
+    }
+    
+    #   extract variable
+    af_var <- cx_mdls_multi_vars[[i]][j]
+    
+    fct_lvls_x <-
+      ehr_cpr_cens11_cohrt_indctr %>%
+      #   drop original variable names
+      select(-any_of(names(ehr_cpr_cens11_cohrt))) %>% #glimpse
+      #   levels for var i
+      select(starts_with(af_var)) %>%
+      names
+    
+    cat("\n  Variable:", af_var, "\n")
+    
+    for (k in seq_along(fct_lvls_x)) {
+      cat("\tLevel:", fct_lvls_x[k], "\n")
+      # replace original variable in formular i with indicator variable k in turn
+      af_fmla <-
+        cx_mdl_multi[[i]]$formula %>%
+        deparse1() %>%
+        str_replace(af_var, paste0("`", fct_lvls_x[k], "`")) %>%
+        #   replace logical with binary outcome variable
+        str_replace("c_frst_cpr", "c_cpr_evnt") %>%
+        as.formula()
+      
+      # print(af_fmla)
+      cat("\t", deparse1(af_fmla), "\n")
+      
+      # fit coxph for AF
+      cx_fit_1 <- coxph(formula = af_fmla,
+                        data = ehr_cpr_cens11_cohrt_indctr,
+                        ties = "breslow")
+      
+      #       helps skip AF calculation which failt
+      try({
+        # attributeable fraction calculation
+        af_cx_fit_1 <-
+          AF::AFcoxph(
+            object = cx_fit_1,
+            data = ehr_cpr_cens11_cohrt_indctr,
+            exposure = paste0(fct_lvls_x[k]),
+            # exposure = paste0(fct_lvls_x[1]),
+            times = follow_up_yr,
+            #if not, numerous calculations are made at 1 decimal place time points
+            clusterid = "c_alf_pe"
+          )
+        
+        #   concat to neat table
+        cx_mdl_multi_demo_af[[paste0(names(cx_mdls_multi_vars[i]), ".", fct_lvls_x[k])]] <-
+          tidy_af(af_cx_fit_1)
+        # af_cx_fit_1_tbl
+        
+      })
+      
+      if (j == var_no) {
+        #     stack AF stats of all vars in this model
+        cx_mdl_demo_af_all[[paste0(mdl_nme)]] <-
+          bind_rows(cx_mdl_multi_demo_af, .id = "mdl_var")
+      }
+      
+    }
+    
+  }
+  
+  if (i == mdl_cnt) {
+      # save list of named dataframes as xlsx with one df per sheet
+      writexl::write_xlsx(cx_mdl_demo_af_all, path = "outputs\\cx_mdl_demo_af_tbls_all.xlsx")
+    }
+}
+
+gc()
+save.image()
+
+```
+
+In some models, AF could not be calculated for some factors due to the following
+types of errors, probably because those factors has too few cases:
+
+Variable: c_sex Level: c_sex_M Surv(c_age_1st_evnt, c_cpr_evnt) ~ c_sex_M + c_ethn +
+m_age_cat + m_edu + m_hh_child_depndt + m_hh_adult + m_fam_status + m_hh_deprv_no
+Error in solve.default(vcov(object = object)) : Lapack routine dgesv: system is
+exactly singular: U[26,26] = 0 In addition: Warning message: In coxph.fit(X, Y,
+istrat, offset, init, control, weights = weights, : Loglik converged before variable
+24 ; coefficient may be infinite. Level: c_sex_F Surv(c_age_1st_evnt, c_cpr_evnt) ~
+c_sex_F + c_ethn + m_age_cat + m_edu + m_hh_child_depndt + m_hh_adult +
+m_fam_status + m_hh_deprv_no Error in solve.default(vcov(object = object)) : Lapack
+routine dgesv: system is exactly singular: U[26,26] = 0 In addition: Warning message:
+In coxph.fit(X, Y, istrat, offset, init, control, weights = weights, : Loglik
+converged before variable 24 ; coefficient may be infinite. Attributable Fractions
+for model demo2c
+
+An alternative to the AF approach for coxph, is to plot adjusted survival curves
+using the ggcoxadjustedcurves function of survminer
+
+## Full models
+
+```{r}
+# ehr_cpr_cens11_cohrt %>% glimpse
+
+# flatten all list to vector, and make unique
+
+cx_mdls_multi_full
+# demo_vars_all <-
+# cx_mdls_multi_vars %>%
+# list_c() %>%
+# unique()
+
+# make formula
+
+for (i in seq_along(cx_mdls_multi_full)) {
+  if (i == 1) {
+    cx_mdl_full_af_all <- list()
+    # mdl_params_multi <- list()
+    
+    #     process AF table for neatness
+    tidy_af <- function(af_objt) {
+      af_objt2 <- summary(af_objt)
+      # af_objt2
+      
+      af_tbl <-
+        dplyr::bind_cols(
+          age_yr = af_objt2$times,
+          af_objt2$AF,
+          af_objt2$confidence.interval,
+          .name_repair = janitor::make_clean_names
+        )
+      
+      return(af_tbl)
+    }
+    
+#     flatten variable list of lists, and return unique variables
+    full_vars_all <-
+      cx_mdls_multi_full %>%
+      list_c() %>%
+      unique()
+    
+    # create indicator variables of levels relevant to the AF computation
+    #     then coearce tibble a raw dataframe for the AFcoxph function
+    ehr_cpr_cens11_cohrt_indctr_full <-
+      ehr_cpr_cens11_cohrt %>%
+      droplevels() %>%
+      fastDummies::dummy_cols(
+        select_columns = full_vars_all,
+        remove_first_dummy = F,
+        ignore_na = T
+      ) %>%
+      mutate(c_cpr_evnt = as.integer(c_cpr_evnt)) %>%
+      as.data.frame()
+    
+    #     track analysis progress
+    mdl_cnt <- length(cx_mdls_multi_full)
+    cat("No. of Models:", mdl_cnt, "\n")
+    
+  }
+  
+  cat("\n----------------------------------------\n")
+  
+  mdl_nme <-
+    names(cx_mdls_multi_full[i])
+  cat("Model Name:", mdl_nme, "\n")
+  
+# }
+  
+  # inner loop for each model
+  for (j in seq_along(cx_mdls_multi_full[[i]])) {
+    if (j == 1) {
+      
+      var_no <- length(cx_mdls_multi_full[[i]])
+      cat("No. of variables:", var_no, "\n")
+      
+      # followup years for AF computation
+      follow_up_yr <- seq.int(1, 11)
+      # follow_up_yr
+      cx_mdl_multi_full_af <- list()
+      # mdl_params_multi <- list()
+      
+    cat("\nAttributable Fractions for model",
+        names(cx_mdls_multi_full[i]), "\n")
+    }
+    
+    #   extract variable
+    af_var <- cx_mdls_multi_full[[i]][j]
+    
+    fct_lvls_x <-
+      ehr_cpr_cens11_cohrt_indctr_full %>%
+      #   drop original variable names
+      select(-any_of(names(ehr_cpr_cens11_cohrt))) %>% #glimpse
+      #   levels for var i
+      select(starts_with(af_var)) %>%
+      names
+    
+    cat("\n  Variable:", af_var, "\n")
+    
+    for (k in seq_along(fct_lvls_x)) {
+      cat("\tLevel:", fct_lvls_x[k], "\n")
+      # replace original variable in formular i with indicator variable k in turn
+      af_fmla <-
+        cx_mdl_multi_full[[i]]$formula %>%
+        deparse1() %>%
+        str_replace(af_var, paste0("`", fct_lvls_x[k], "`")) %>%
+        #   replace logical with binary outcome variable, and updated naming of outcomes
+        # str_replace("frst_cpr", "c_cpr_evnt") %>%
+        # str_replace("age_1st_evnt", "c_age_1st_evnt") %>%
+        as.formula()
+      
+      # print(af_fmla)
+      cat("\t", deparse1(af_fmla), "\n")
+      
+      # fit coxph for AF
+      cx_fit_1 <- coxph(formula = af_fmla,
+                        data = ehr_cpr_cens11_cohrt_indctr_full,
+                        ties = "breslow")
+      
+      #       helps skip AF calculation which failt
+      try({
+        # attributeable fraction calculation
+        af_cx_fit_1 <-
+          AF::AFcoxph(
+            object = cx_fit_1,
+            data = ehr_cpr_cens11_cohrt_indctr_full,
+            exposure = paste0(fct_lvls_x[k]),
+            # exposure = paste0(fct_lvls_x[1]),
+            times = follow_up_yr,
+            #if not, numerous calculations are made at 1 decimal place time points
+            clusterid = "c_alf_pe"
+          )
+        
+        #   concat to neat table
+        cx_mdl_multi_full_af[[paste0(names(cx_mdls_multi_full[i]), ".", fct_lvls_x[k])]] <-
+          tidy_af(af_cx_fit_1)
+        # af_cx_fit_1_tbl
+        
+      })
+      
+      if (j == var_no) {
+        #     stack AF stats of all vars in this model
+        cx_mdl_full_af_all[[paste0(mdl_nme)]] <-
+          bind_rows(cx_mdl_multi_full_af, .id = "mdl_var")
+      }
+      
+    }
+    
+  }
+  
+  if (i == mdl_cnt) {
+    # save list of named dataframes as xlsx with one df per sheet
+    writexl::write_xlsx(cx_mdl_full_af_all, path =
+                          "outputs\\cx_mdl_full_af_tbls_all.xlsx")
+  }
+}
+
+full_vars_all[1]
+
+cx_mdl_full_af_all
+
+gc()
+save.image()
+
+```
+Only AF for full models a and b were calculated successfully for all variables. Models C and d calculated for only marital status. All other variables returned errors similar to the following and failed to calculate:
+Level: c_sex_F 
+	 Surv(c_age_1st_evnt, c_cpr_evnt) ~ c_sex_F + c_ethn + m_age_cat + m_edu + m_hh_child_depndt + m_hh_adult + m_fam_status + m_hh_deprv_no + c_cgm + c_ptb + c_bw + m_alc + m_lrn + m_mnt + m_sbm + m_smk 
+Error in solve.default(vcov(object = object)) : 
+  Lapack routine dgesv: system is exactly singular: U[26,26] = 0
+In addition: Warning message:
+In coxph.fit(X, Y, istrat, offset, init, control, weights = weights,  :
+  Loglik converged before variable  24 ; coefficient may be infinite. 
+  
+It appears much of this problem might be from variables with variabes encoded unknown lining up to create collinearity (and then singularity problems)
+
+# Attributable Fractions (graphPAF)
+
+## PAF helper functions
+
+Targeted graphPAF intervention helper for categorical/factor exposures
+
+Purpose:
+  Estimate the population attributable fraction (PAF) for hypothetical
+  interventions that move one observed level of a factor exposure to a chosen
+  reference/intervention level, while all other exposure levels remain as
+  observed.
+
+Example:
+  For m_hh_deprv_no with levels 0, 1, 2, 3 and 4, setting ref_lvl = "0"
+  estimates separate scenarios for 1 -> 0, 2 -> 0, 3 -> 0 and 4 -> 0.
+```{r}
+
+# Convert graphPAF::impact_fraction(..., ci = TRUE) output to a tidy dataframe.
+tidy_graphpaf_if <- function(if_obj) {
+  if ("time_vec" %in% names(if_obj)) {
+    out <- tibble(
+      Time = as.numeric(if_obj$time_vec),
+      Estimated_PAF = as.numeric(if_obj$estimate),
+      CI = as.character(if_obj$confidence_interval)
+    )
+  } else {
+    out <- tibble(
+      Time = NA_real_,
+      Estimated_PAF = as.numeric(if_obj$estimate),
+      CI = as.character(if_obj$confidence_interval)
+    )
+  }
+
+  out %>%
+    mutate(
+      conf.low = as.numeric(str_match(CI, "\\(?\\s*([^,]+)\\s*,")[, 2]),
+      conf.high = as.numeric(str_match(CI, ",\\s*([^\\)]+)\\s*\\)?")[, 2])
+    )
+}
+
+# Estimate intervention PAFs for every eligible level of a factor exposure.
+calc_deprv_level_paf <- function(ftd_mdl,
+                                 data,
+                                 fct_var,
+                                 ref_lvl,
+                                 excld_lvl = NULL,
+                                 boot_rep = 100,
+                                 t_vector = NULL,
+                                 calculation_method = "D",
+                                 ci_level = 0.95,
+                                 ci_type = "norm",
+                                 verbose = FALSE) {
+  fct_var_chr <- as_name(ensym(fct_var))
+  ref_lvl <- as.character(ref_lvl)
+  excld_lvl <- as.character(excld_lvl)
+
+  if (!is.data.frame(data)) {
+    stop("`data` must be a dataframe containing the variables used to fit `ftd_mdl`.")
+  }
+
+  if (!fct_var_chr %in% names(data)) {
+    stop("`fct_var` was not found in `data`.")
+  }
+
+  # graphPAF requires original and counterfactual datasets with matching
+  # dimensions, column names and column classes. Work on a data.frame copy and
+  # preserve row names used by fitted model objects.
+  data <- as.data.frame(data)
+  data_row_names <- row.names(data)
+
+  data <- data %>%
+    mutate("{fct_var_chr}" := fct_drop(as_factor(.data[[fct_var_chr]])))
+
+  row.names(data) <- data_row_names
+
+  fct_lvls <- levels(data[[fct_var_chr]])
+
+  if (!ref_lvl %in% fct_lvls) {
+    stop("`ref_lvl` must be one of the observed levels of `fct_var`.")
+  }
+
+  missing_exclusions <- setdiff(excld_lvl, fct_lvls)
+  if (length(missing_exclusions) > 0) {
+    stop("All values in `excld_lvl` must be observed levels of `fct_var`.")
+  }
+
+  levels_to_move <- setdiff(fct_lvls, c(ref_lvl, excld_lvl))
+
+  if (length(levels_to_move) == 0) {
+    stop("No eligible factor levels remain after excluding `ref_lvl` and `excld_lvl`.")
+  }
+
+  if (inherits(ftd_mdl, "coxph") && is.null(t_vector)) {
+    stop("`t_vector` must be supplied when `ftd_mdl` is a Cox proportional hazards model.")
+  }
+
+  if (inherits(ftd_mdl, "coxph") && calculation_method != "D") {
+    stop("For Cox proportional hazards models, graphPAF requires `calculation_method = \"D\"`.")
+  }
+
+  # graphPAF's bootstrap code expects the boot.ncpus option to be set.
+  if (is.null(getOption("boot.ncpus"))) {
+    options(boot.ncpus = 1)
+  }
+
+  map_dfr(levels_to_move, function(level_from) {
+    # forcats::fct_recode() uses "new level" = "old level" syntax.
+    # Here, one exposure level is moved to the reference/intervention level.
+    recode_spec <- set_names(as.list(level_from), ref_lvl)
+
+    new_data <- data %>%
+      mutate(
+        "{fct_var_chr}" := .data[[fct_var_chr]] %>%
+          fct_recode(!!!recode_spec) %>%
+          fct_expand(!!!fct_lvls) %>%
+          fct_relevel(fct_lvls)
+      )
+
+    row.names(new_data) <- data_row_names
+
+    if_obj <- graphPAF::impact_fraction(
+      model = ftd_mdl,
+      data = data,
+      new_data = new_data,
+      calculation_method = calculation_method,
+      ci = TRUE,
+      boot_rep = boot_rep,
+      t_vector = t_vector,
+      ci_level = ci_level,
+      ci_type = ci_type,
+      verbose = verbose
+    )
+
+    tidy_graphpaf_if(if_obj) %>%
+      mutate(
+        variable = fct_var_chr,
+        level_from = as.character(level_from),
+        level_to = ref_lvl,
+        excluded_levels = if_else(
+          length(excld_lvl) == 0,
+          NA_character_,
+          str_c(excld_lvl, collapse = "; ")
+        ),
+        scenario = str_c(fct_var_chr, ": ", level_from, " -> ", ref_lvl),
+        .before = 1
+      )
+  })
+}
+
+
+# -------------------------------------------------------------------------
+# Example 1: four separate interventions for household deprivation count.
+# -------------------------------------------------------------------------
+
+# deprv_no_unadj_cxph <-
+#   survival::coxph(
+#     formula = survival::Surv(c_age_1st_event, c_frst_cpr) ~ m_hh_deprv_no,
+#     data = ehr_cpr_cens11_cohrt,
+#     id = c_alf_pe
+#   )
+#
+# follow_up_yr <- seq.int(0, 11)
+#
+# paf_deprv_no_to_zero <-
+#   calc_deprv_level_paf(
+#     ftd_mdl = deprv_no_unadj_cxph,
+#     data = ehr_cpr_cens11_cohrt,
+#     fct_var = m_hh_deprv_no,
+#     ref_lvl = "0",
+#     boot_rep = 500,
+#     t_vector = follow_up_yr
+#   )
+
+# -------------------------------------------------------------------------
+# Example 2: move only deprivation counts above 1 to level 1.
+# -------------------------------------------------------------------------
+
+# This estimates separate scenarios for 2 -> 1, 3 -> 1 and 4 -> 1. Level 0 is
+# excluded so deprivation-free households are not counterfactually moved to 1.
+#
+# paf_deprv_gt1_to_one <-
+#   calc_deprv_level_paf(
+#     ftd_mdl = deprv_no_unadj_cxph,
+#     data = ehr_cpr_cens11_cohrt,
+#     fct_var = m_hh_deprv_no,
+#     ref_lvl = "1",
+#     excld_lvl = "0",
+#     boot_rep = 500,
+#     t_vector = follow_up_yr
+#   )
+
+# -------------------------------------------------------------------------
+# Example 3: same function with a non-numeric factor exposure.
+# -------------------------------------------------------------------------
+
+# paf_deprv_dims_to_none <-
+#   calc_deprv_level_paf(
+#     ftd_mdl = deprv_dims_unadj_cxph,
+#     data = ehr_cpr_cens11_cohrt,
+#     fct_var = m_hh_deprv_dms,
+#     ref_lvl = "None",
+#     boot_rep = 500,
+#     t_vector = follow_up_yr
+#   )
+
+# source further Counterfactual graphPAF helpers for household deprivation exposures
+source("P:\\abubakae\\sail1409\\child_nglct\\calc_deprv_counterfactual_paf_graphpaf.R")
+# -------------------------------------------------------------------------
+# Example workflow
+# -------------------------------------------------------------------------
+#
+# paf_no_unadj <- calc_dprv_no_rdctn_paf(
+#   ftd_mdl = deprv_no_unadj_cxph,
+#   data = ehr_cpr_cens11_cohrt,
+#   fct_var = m_hh_deprv_no,
+#   dprv_rdctn_no = 1,
+#   t_vector = seq.int(0, 11)
+# )
+#
+# paf_no_plot <- plot_dprv_no_rdctn_paf(
+#   paf_results = list(
+#     "Unadjusted" = paf_no_unadj,
+#     "Demography adjusted" = paf_no_demography,
+#     "Fully adjusted" = paf_no_full
+#   ),
+#   time_point = 6
+# )
+#
+# paf_dms_unadj <- calc_dprv_dms_rmvl_paf(
+#   ftd_mdl = deprv_dms_unadj_cxph,
+#   data = ehr_cpr_cens11_cohrt,
+#   fct_var = m_hh_deprv_dms,
+#   t_vector = seq.int(0, 11)
+# )
+#
+# paf_dms_plot <- plot_dprv_dms_rmvl_paf(
+#   paf_results = list("Unadjusted" = paf_dms_unadj),
+#   time_point = 6
+# )
+
+```
+
+## Deprivation combinations
+### Unadjusted (bivariate) Models
+```{r}
+
+# use counts of deprivation
+
+# use combinations of deprivation
+
+deprv_dms_unadj_cxph <- survival::coxph(formula = Surv(c_age_1st_evnt, c_frst_cpr) ~ m_hh_deprv_dms,
+                                    data    = ehr_cpr_cens11_cohrt,
+                                    id      = c_alf_pe)
+summary(deprv_dms_unadj_cxph)
+
+
+ehr_cpr_cens11_cohrt |> 
+  frq(m_hh_deprv_dms)
+
+# compute population AF: set each dimension to none
+deprv_dms_to_none <-
+  paf_deprv_no_to_zero <-
+    calc_deprv_level_paf(
+      ftd_mdl = deprv_dms_unadj_cxph,
+      data = ehr_cpr_cens11_cohrt,
+      fct_var = m_hh_deprv_dms,
+      output_file = "paf_dms_2_none_unadj.csv",
+      ref_lvl = "None",
+      boot_rep = 100,
+      t_vector = follow_up_yr
+    )
+deprv_dms_to_none |> glimpse()
+
+# compute population AF: remove each unitary dimension in turn
+tic()
+Sys.time()
+paf_dms_unadj <- calc_dprv_dms_rmvl_paf(
+  ftd_mdl = deprv_dms_unadj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_dms,
+  t_vector = seq.int(0, 11),
+  output_file = "paf_dms_unadj.csv"
+)
+Sys.time()
+toc() #1162.31 sec elapsed (20 mins)
+paf_dms_unadj |> glimpse()
+
+
+```
+
+### Demography adjusted Models
+```{r}
+
+deprv_dms_demo_adj_cxph <-
+  survival::coxph(formula = Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_dms,
+                                    data    = ehr_cpr_cens11_cohrt,
+                                    id      = c_alf_pe)
+summary(deprv_dms_demo_adj_cxph)
+
+# compute population AF: set each dimension to none
+tic()
+Sys.time()
+deprv_dms_demo_adj_to_none <-
+  paf_deprv_no_to_zero <-
+    calc_deprv_level_paf(
+      ftd_mdl = deprv_dms_demo_adj_cxph,
+      data = ehr_cpr_cens11_cohrt,
+      fct_var = m_hh_deprv_dms,
+      ref_lvl = "None",
+      boot_rep = 100,
+      t_vector = follow_up_yr
+    )
+Sys.time()
+toc() #715.32 sec elapsed
+deprv_dms_demo_adj_to_none |> glimpse()
+
+# compute population AF: remove each unitary dimension in turn
+tic()
+Sys.time()
+paf_dms_demo_adj <- calc_dprv_dms_rmvl_paf(
+  ftd_mdl = deprv_dms_demo_adj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_dms,
+  t_vector = seq.int(0, 11),
+  output_file = "paf_dms_demo_adj.csv"
+)
+Sys.time()
+toc() #1625.84 sec elapsed (30 mins)
+paf_dms_demo_adj |> glimpse()
+
+```
+
+### Full model
+```{r}
+
+names(cx_mdls_multi_full)
+
+# Model full_2b: 
+# Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + 
+#     m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_dms + 
+#     c_cgm + c_ptb + c_bw + m_alc + m_lrn + m_mnt + m_sbm + m_smk
+
+deprv_dms_full_adj_cxph <-
+  survival::coxph(formula = Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_dms + c_cgm + c_ptb + c_bw + m_alc + m_lrn + m_mnt + m_sbm + m_smk,
+                                    data    = ehr_cpr_cens11_cohrt,
+                                    id      = c_alf_pe)
+summary(deprv_dms_full_adj_cxph)
+
+# compute population AF: set each dimension to none
+tic()
+Sys.time()
+deprv_dms_full_adj_to_none <-
+  paf_deprv_no_to_zero <-
+    calc_deprv_level_paf(
+      ftd_mdl = deprv_dms_full_adj_cxph,
+      data = ehr_cpr_cens11_cohrt,
+      fct_var = m_hh_deprv_dms,
+      ref_lvl = "None",
+      boot_rep = 100,
+      t_vector = follow_up_yr
+    )
+Sys.time()
+toc() #944.53 sec elapsed
+deprv_dms_full_adj_to_none |> glimpse()
+
+# compute population AF: remove each unitary dimension in turn
+tic()
+Sys.time()
+paf_dms_full_adj <- calc_dprv_dms_rmvl_paf(
+  ftd_mdl = deprv_dms_full_adj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_dms,
+  t_vector = seq.int(0, 11),
+  output_file = "paf_dms_full_adj.csv"
+)
+Sys.time()
+toc() #
+paf_dms_full_adj |> glimpse()
+
+```
+
+### PAF Excel export
+```{r}
+# Moving deprivation domains to none
+dprv_dms_2_non_tbl <- 
+  bind_rows(list("Unadjusted" = deprv_dms_to_none,
+               "Demography-Adjusted" = deprv_dms_demo_adj_to_none,
+               "Fully-Adjusted" = deprv_dms_full_adj_to_none),
+          .id = "adj_lvl") |> 
+  glimpse()
+
+# remove each unitary dimension in turn
+dprv_dms_rmvl_tbl <-
+  bind_rows(list("Unadjusted" = paf_dms_unadj,
+               "Demography-Adjusted" = paf_dms_demo_adj,
+               "Fully-Adjusted" = paf_dms_full_adj),
+          .id = "adj_lvl") |> 
+  glimpse()
+
+# save list of named dataframes as xlsx with one df per sheet
+    writexl::write_xlsx(list("dprv_dms_2_non" = dprv_dms_2_non_tbl,
+                             "dprv_dms_rmvl" = dprv_dms_rmvl_tbl),
+                        path = "outputs\\paf_dprv_dms.xlsx")
+
+```
+
+### Plots: PAF deprivation domains
+```{r}
+
+# create plots
+## Plot counterfactual removal of each unitary deprivation dimension
+paf_dms_rmvl_plot <- plot_dprv_dms_rmvl_paf(
+  paf_results = list("Unadjusted" = paf_dms_unadj,
+                     "Demography-Adjusted" = paf_dms_demo_adj,
+                     "Fully-Adjusted" = paf_dms_full_adj
+                     ),
+  time_point = 6
+)
+# paf_dms_rmvl_plot
+
+## Plot counterfactual move of each dms combination to none
+paf_dms_to_none_plot <- plot_deprv_level_paf(
+  paf_results = list("Unadjusted" = deprv_dms_to_none,
+                     "Demography-Adjusted" = deprv_dms_demo_adj_to_none,
+                     "Fully-Adjusted" = deprv_dms_full_adj_to_none
+                     ),
+  time_point = 6
+)
+# paf_dms_to_none_plot
+
+# mosaic the deprivation domain PAF plots
+# unit(c(0,30,0,0) = top, right, bottom, left
+paf_dms_all_stch_plts <-
+  ((paf_dms_to_none_plot + theme(plot.margin = unit(c(0,0,0.5,0), "in")))/paf_dms_rmvl_plot) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect",
+                heights = c(1,3)) &
+    theme(legend.position='bottom')
+
+ggsave(
+  filename = "outputs\\paf_dms_all_stch_plts.png",
+  plot = paf_dms_all_stch_plts,
+  # scale = 0.75,
+  height = 15,
+  width = 14,
+  # units = 'cm',
+  # dpi = 900
+)
+
+# Extract PAF tables
+
+calc_deprv_level_paf(deprv_dms_to_none)
+
+gc()
+save.image()
+```
+
+## Deprivation counts
+Consider the following counterfactual scenarios (and their associated plots)
+* Move each count of deprivation to zero (eradicating HH deprivation altogether). 
+* Reduce counts of HH deprivation (a) by 1, and (b) by 2
+* reduce deprivation in HHs with (a) counts above 1 to 1 & (b) counts above 2 to 2
+
+
+### Unadjusted (bivariate) Models
+```{r}
+
+#     fit bivariate survival model
+deprv_no_unadj_cxph <-
+  survival::coxph(formula = Surv(c_age_1st_evnt, c_frst_cpr) ~ m_hh_deprv_no,
+                                    data    = ehr_cpr_cens11_cohrt,
+                                    id      = c_alf_pe)
+
+summary(deprv_no_unadj_cxph)
+
+# age vector of interest
+follow_up_yr <- seq.int(0, 11)
+follow_up_yr
+
+# compute population AF: set each deprivation count to 0 in turns
+tic()
+Sys.time()
+paf_deprv_no_to_0_unadj <-
+  calc_deprv_level_paf(
+    ftd_mdl = deprv_no_unadj_cxph,
+    data = ehr_cpr_cens11_cohrt,
+    fct_var = m_hh_deprv_no,
+    ref_lvl = "0",
+    boot_rep = 100,
+    t_vector = follow_up_yr
+  )
+Sys.time()
+toc() #112.39 sec elapsed
+
+paf_deprv_no_to_0_unadj |> 
+  filter(Time == 6) |> 
+  view("unadj")
+
+# compute population AF: reduce deprivation by 1
+tic()
+Sys.time()
+paf_deprv_rdtn_by1_unadj <-
+  calc_dprv_no_rdctn_paf(
+  ftd_mdl = deprv_no_unadj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_no,
+  dprv_rdctn_no = 1,
+  t_vector = follow_up_yr,
+  output_file = "paf_deprv_rdtn_by1_unadj.csv"
+)
+Sys.time()
+toc() #123.25 sec elapsed
+
+paf_deprv_rdtn_by1_unadj |> glimpse()
+
+# compute population AF: reduce deprivation by 2
+tic()
+Sys.time()
+paf_deprv_rdtn_by2_unadj <-
+  calc_dprv_no_rdctn_paf(
+  ftd_mdl = deprv_no_unadj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_no,
+  dprv_rdctn_no = 2,
+  t_vector = follow_up_yr,
+  output_file = "paf_deprv_rdtn_by2_unadj.csv"
+)
+Sys.time()
+toc() #110.7 sec elapsed
+
+paf_deprv_rdtn_by2_unadj |> glimpse()
+
+# # move only deprivation counts above 1 to level 1.
+# tic()
+# Sys.time()
+# paf_deprv_gt1_to_1_unadj <-
+#   calc_deprv_level_paf(
+#     ftd_mdl = deprv_no_unadj_cxph,
+#     data = ehr_cpr_cens11_cohrt,
+#     fct_var = m_hh_deprv_no,
+#     ref_lvl = "1",
+#     excld_lvl = "0",
+#     boot_rep = 100,
+#     t_vector = follow_up_yr
+#   )
+# Sys.time()
+# toc() #108.61 sec elapsed
+# 
+# paf_deprv_gt1_to_1_unadj |> glimpse()
+```
+
+### Demography adjusted models
+```{r}
+
+covar_all
+
+# refit coxph model
+frml_a <- as.formula(paste0("Surv(c_age_1st_evnt, c_frst_cpr) ~ ", covar_all[[14]]))
+deparse1(frml_a)
+# cat("\nModel", i, "\n")
+# print(frml_a)
+
+# extract formular from originally fitted model
+formula(deparse1(cx_mdl_multi[["demo2a"]]$formula))
+
+#     fit demography adjusted survival model
+deprv_no_demo_adj_cxph <-
+  survival::coxph(formula = Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_no,
+                                    data    = ehr_cpr_cens11_cohrt,
+                                    id      = c_alf_pe)
+
+summary(deprv_no_demo_adj_cxph)
+
+# compute population AF: set deprivation to 0
+tic()
+Sys.time()
+paf_deprv_no_to_0_demo_adj <-
+  calc_deprv_level_paf(
+    ftd_mdl = deprv_no_demo_adj_cxph,
+    data = ehr_cpr_cens11_cohrt,
+    fct_var = m_hh_deprv_no,
+    ref_lvl = "0",
+    boot_rep = 100,
+    t_vector = follow_up_yr
+  )
+Sys.time()
+toc() #
+
+paf_deprv_no_to_0_demo_adj |> glimpse()
+paf_deprv_no_to_0_demo_adj |> 
+  filter(Time == 6) |> 
+  view("demo-adj")
+
+# compute population AF: reduce deprivation by 1
+tic()
+Sys.time()
+paf_deprv_rdtn_by1_demo_adj <- calc_dprv_no_rdctn_paf(
+  ftd_mdl = deprv_no_demo_adj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_no,
+  dprv_rdctn_no = 1,
+  t_vector = follow_up_yr,
+  output_file = "paf_deprv_rdtn_by1_demo_adj.csv"
+)
+Sys.time()
+toc() #
+
+paf_deprv_rdtn_by1_demo_adj |> glimpse()
+
+# compute population AF: reduce deprivation by 2
+tic()
+Sys.time()
+paf_deprv_rdtn_by2_demo_adj <-
+  calc_dprv_no_rdctn_paf(
+  ftd_mdl = deprv_no_demo_adj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_no,
+  dprv_rdctn_no = 2,
+  t_vector = follow_up_yr,
+  output_file = "paf_deprv_rdtn_by2_demo_adj.csv"
+)
+Sys.time()
+toc() #
+
+paf_deprv_rdtn_by2_demo_adj |> glimpse()
+
+# # move only deprivation counts above 1 to level 1.
+# tic()
+# Sys.time()
+# paf_deprv_gt1_to_1_demo_adj <-
+#   calc_deprv_level_paf(
+#     ftd_mdl = deprv_no_demo_adj_cxph,
+#     data = ehr_cpr_cens11_cohrt,
+#     fct_var = m_hh_deprv_no,
+#     ref_lvl = "1",
+#     excld_lvl = "0",
+#     boot_rep = 100,
+#     t_vector = follow_up_yr
+#   )
+# Sys.time()
+# toc()
+# 
+# paf_deprv_gt1_to_1_demo_adj |> glimpse()
+
+gc()
+# save.image()
+```
+
+### Full model
+```{r}
+
+names(cx_mdls_multi_full)
+
+# Model full_2a: 
+# Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + 
+#     m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_no + 
+#     c_cgm + c_ptb + c_bw + m_alc + m_lrn + m_mnt + m_sbm + m_smk
+
+#     fit demography adjusted survival model
+deprv_no_full_adj_cxph <-
+  survival::coxph(formula = Surv(c_age_1st_evnt, c_frst_cpr) ~ c_sex + c_ethn + m_age_cat + m_edu + m_hh_child_depndt + m_hh_adult + m_mar_status + m_hh_deprv_no + c_cgm + c_ptb + c_bw + m_alc + m_lrn + m_mnt + m_sbm + m_smk,
+                                    data    = ehr_cpr_cens11_cohrt,
+                                    id      = c_alf_pe)
+
+summary(deprv_no_full_adj_cxph)
+
+# compute population AF: set deprivation to 0
+tic()
+Sys.time()
+paf_deprv_no_to_0_full_adj <-
+  calc_deprv_level_paf(
+    ftd_mdl = deprv_no_full_adj_cxph,
+    data = ehr_cpr_cens11_cohrt,
+    fct_var = m_hh_deprv_no,
+    ref_lvl = "0",
+    boot_rep = 100,
+    t_vector = follow_up_yr
+  )
+Sys.time()
+toc() #207.26 sec elapsed
+
+paf_deprv_no_to_0_full_adj |> glimpse()
+paf_deprv_no_to_0_full_adj |> 
+  filter(Time == 6) |> 
+  view("full-adj")
+
+# compute population AF: reduce deprivation by 1
+tic()
+Sys.time()
+paf_deprv_rdtn_by1_full_adj <- calc_dprv_no_rdctn_paf(
+  ftd_mdl = deprv_no_full_adj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_no,
+  dprv_rdctn_no = 1,
+  t_vector = follow_up_yr,
+  output_file = "paf_deprv_rdtn_by1_full_adj.csv"
+)
+Sys.time()
+toc() #183.8 sec elapsed
+
+paf_deprv_rdtn_by1_full_adj |> glimpse()
+
+# compute population AF: reduce deprivation by 2
+tic()
+Sys.time()
+paf_deprv_rdtn_by2_full_adj <-
+  calc_dprv_no_rdctn_paf(
+  ftd_mdl = deprv_no_full_adj_cxph,
+  data = ehr_cpr_cens11_cohrt,
+  fct_var = m_hh_deprv_no,
+  dprv_rdctn_no = 2,
+  t_vector = follow_up_yr,
+  output_file = "paf_deprv_rdtn_by2_full_adj.csv"
+)
+Sys.time()
+toc() #207.76 sec elapsed
+
+paf_deprv_rdtn_by2_full_adj |> glimpse()
+
+# # move only deprivation counts above 1 to level 1.
+# tic()
+# Sys.time()
+# paf_deprv_gt1_to_1_full_adj <-
+#   calc_deprv_level_paf(
+#     ftd_mdl = deprv_no_full_adj_cxph,
+#     data = ehr_cpr_cens11_cohrt,
+#     fct_var = m_hh_deprv_no,
+#     ref_lvl = "1",
+#     excld_lvl = "0",
+#     boot_rep = 100,
+#     t_vector = follow_up_yr
+#   )
+# Sys.time()
+# toc() #214.85 sec elapsed
+# 
+# paf_deprv_gt1_to_1_full_adj |> glimpse()
+
+gc()
+
+```
+
+### PAF count dprv excel export
+```{r}
+# Moving deprivation count to 0
+dprv_2_non_tbl <- 
+  bind_rows(list("Unadjusted" = paf_deprv_no_to_0_unadj,
+               "Demography-Adjusted" = paf_deprv_no_to_0_demo_adj,
+               "Fully-Adjusted" = paf_deprv_no_to_0_full_adj),
+          .id = "adj_lvl") |> 
+  glimpse()
+
+# reduce deprivation count by 1
+dprv_rdtn_by1_tbl <-
+  bind_rows(list("Unadjusted" = paf_deprv_rdtn_by1_unadj,
+               "Demography-Adjusted" = paf_deprv_rdtn_by1_demo_adj,
+               "Fully-Adjusted" = paf_deprv_rdtn_by1_full_adj),
+          .id = "adj_lvl") |> 
+  glimpse()
+
+# reduce deprivation count by 2
+dprv_rdtn_by2_tbl <-
+  bind_rows(list("Unadjusted" = paf_deprv_rdtn_by2_unadj,
+               "Demography-Adjusted" = paf_deprv_rdtn_by2_demo_adj,
+               "Fully-Adjusted" = paf_deprv_rdtn_by2_full_adj),
+          .id = "adj_lvl") |> 
+  glimpse()
+
+# save list of named dataframes as xlsx with one df per sheet
+    writexl::write_xlsx(list("dprv_no_2_non" = dprv_2_non_tbl,
+                             "dprv_rdtn_by1" = dprv_rdtn_by1_tbl,
+                             "dprv_rdtn_by2" = dprv_rdtn_by2_tbl),
+                        path = "outputs\\paf_dprv_count.xlsx")
+```
+
+### Plots: PAF deprivation domains
+```{r}
+
+# writexl::write_xlsx(cx_mdl_full_af_all, path =
+#                           "outputs\\cx_mdl_full_af_tbls_all.xlsx")
+
+# create plots
+## Plot population AF: reduce all deprivation counts to 0
+paf_plot_deprv_no_to_0 <- plot_dprv_no_rdctn_paf(
+  paf_results = list(
+    "Unadjusted" = paf_deprv_no_to_0_unadj,
+    "Demography adjusted" = paf_deprv_no_to_0_demo_adj,
+    "Fully adjusted" = paf_deprv_no_to_0_full_adj
+  ),
+  output_stem = "paf_dprvtn_no_to_0",
+  title = "AF after reducing household deprivation counts to Zero",
+  time_point = 6
+)
+# paf_plot_deprv_no_to_0
+
+## Plot population AF: reduce deprivation by 1
+paf_plot_deprv_rdtn_by1 <- 
+  plot_dprv_no_rdctn_paf(
+  paf_results = list(
+    "Unadjusted" = paf_deprv_rdtn_by1_unadj,
+    "Demography adjusted" = paf_deprv_rdtn_by1_demo_adj,
+    "Fully adjusted" = paf_deprv_rdtn_by1_full_adj
+  ),
+  output_stem = "paf_dprvtn_cnt_rdtn_by1",
+  title = "AF after reducing household deprivation counts by 1",
+  time_point = 6
+)
+# paf_plot_deprv_rdtn_by1
+
+## Plot population AF: reduce deprivation by 2
+paf_plot_deprv_rdtn_by2 <- 
+  plot_dprv_no_rdctn_paf(
+  paf_results = list(
+    "Unadjusted" = paf_deprv_rdtn_by2_unadj,
+    "Demography adjusted" = paf_deprv_rdtn_by2_demo_adj,
+    "Fully adjusted" = paf_deprv_rdtn_by2_full_adj
+  ),
+  output_stem = "paf_dprvtn_cnt_rdtn_by2",
+  title = "AF after reducing household deprivation counts by 2",
+  time_point = 6
+)
+# paf_plot_deprv_rdtn_by2
+
+# mosaic the deprivation count PAF plots
+paf_pdrv_no_all_stch_plts <-
+  (paf_plot_deprv_no_to_0 | paf_plot_deprv_rdtn_by1 | paf_plot_deprv_rdtn_by2)  +
+    plot_layout(guides = 'collect',
+                axes = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+ggsave(
+  filename = "outputs\\paf_pdrv_no_all_stch_plts.png",
+  plot = paf_pdrv_no_all_stch_plts,
+  # scale = 0.75,
+  height = 6,
+  width = 18,
+  # units = 'cm',
+  # dpi = 900
+)  
+
+gc()
+save.image()
+```
+
+# Adjusted Survival curves
+## Demographic Models
+```{r}
+names(cx_mdls_multi_vars)
+
+# print only formula to fit for documentation
+for (i in seq_along(cx_mdls_multi_vars)) {
+  if (i == 1) {
+    outa_frml_no <- length(cx_mdls_multi_vars)
+    cat("\nOuter formula (Total:", outa_frml_no, ")\n")
+    
+    cxph_adj_demo_tbls_all <- list()
+    
+    #     ensure proper dataframe
+    ehr_cpr_cens11_cohrt_df <- as.data.frame(ehr_cpr_cens11_cohrt)
+  }
+  
+  #   prep formula, fit models, process & output coefficients
+  outa_frml <- paste0("Surv(c_age_1st_evnt, c_frst_cpr) ~ ",
+                      paste(cx_mdls_multi_vars[[i]], collapse = " + "))
+  
+  cat("\n----------------------------\n")
+  mdl_nme <- names(cx_mdls_multi_vars[i])
+  cat("Model Name:", mdl_nme)
+  cat("\n", i, as.formula(outa_frml) %>% deparse1())
+  
+  # names(cx_mdls_multi_vars)
+  
+  #   control for each factor as a grouping variable in the model
+  for (j in seq_along(cx_mdls_multi_vars[[i]])) {
+    if (i == 1 & j == 1) {
+      inner_frml_no <- length(cx_mdls_multi_vars[[i]])
+      cat("\n\tInner formula (Total:", inner_frml_no, ")\n")
+      
+      cxph_adj_demo_mdls <- list()
+      cxph_adj_demo_plts <- list()
+      cxph_adj_demo_tbls <- list()
+    }
+    
+# cx_mdls_multi_vars[[1]]
+    
+    #     stratifying variables (for adjusted model)
+    strata_var <- cx_mdls_multi_vars[[i]][j]
+    #     name model of strata
+    adj_mdl_nme <- paste0(mdl_nme, ".", strata_var)
+    #     upgrade formula with strata
+    frml_strata <- paste0(outa_frml, " + strata(", strata_var, ")")
+    cat("\n\t", j, as.formula(frml_strata) %>% deparse1(), "\n")
+    
+    try(# using coxph + ggsurvfit package
+      #   create model
+      cxph_adj_demo_mdls[[adj_mdl_nme]] <-
+        coxph(formula = as.formula(frml_strata), data = ehr_cpr_cens11_cohrt_df) %>%
+        ggsurvfit::survfit2())
+    
+    # NO LONGER NEEDED SINCE CAN'T PASS SAIL'S SDC
+    # if ("survfit2" %in% class(cxph_adj_demo_mdls[[adj_mdl_nme]])) {
+    #   #   tidy tables of the model, for flexible plotting elsewhere
+    #   cxph_adj_demo_tbls[[adj_mdl_nme]] <-
+    #     cxph_adj_demo_mdls[[adj_mdl_nme]] %>%
+    #     tidy_survfit()
+    #   # demo_mdl_adj_tbl
+    # }
+    
+    # class(cxph_adj_demo_mdls[[1]])
+    
+    #     proper formating of print name
+    # list all potantial exposures/covariates
+    if (strata_var == "c_sex") {
+      strata_nme = "Child Sex"
+    }
+    if (strata_var == "c_ethn") {
+      strata_nme = "Child ethnicity"
+    }
+    if (strata_var == "c_cgm") {
+      strata_nme = "Child congenital anomalies"
+    }
+    if (strata_var == "c_ptb") {
+      strata_nme = "Child preterm birth"
+    }
+    if (strata_var == "c_bw") {
+      strata_nme = "Child birth weight"
+    }
+    if (strata_var == "m_age_cat") {
+      strata_nme = "Mother age at birth"
+    }
+    if (strata_var == "m_ethnic") {
+      strata_nme = "Mother ethnicity"
+    }
+    if (strata_var == "m_edu") {
+      strata_nme = "Mother eductation"
+    }
+    if (strata_var == "m_hh_child_depndt") {
+      strata_nme = "Mother HH dependent children"
+    }
+    if (strata_var == "m_hh_adult") {
+      strata_nme = "Mother HH adults"
+    }
+    if (strata_var == "m_mar_status") {
+      strata_nme = "Mother marital status"
+    }
+    if (strata_var == "m_fam_status") {
+      strata_nme = "Mother family status"
+    }
+    if (strata_var == "m_uk_stay_len") {
+      strata_nme = "Mother length of UK stay"
+    }
+    if (strata_var == "m_hh_deprv_no") {
+      strata_nme = "Mother HH deprivation count"
+    }
+    if (strata_var == "m_hh_deprv_dms") {
+      strata_nme = "Mother HH deprivation dimensions"
+    }
+    if (strata_var == "m_twns2011") {
+      strata_nme = "Mother Townsend 2011 quintile"
+    }
+    if (strata_var == "m_alc") {
+      strata_nme = "Mother alcohol problems"
+    }
+    if (strata_var == "m_lrn") {
+      strata_nme = "Mother learning difficulties/disabilities"
+    }
+    if (strata_var == "m_mnt") {
+      strata_nme = "Mother mental health issues"
+    }
+    if (strata_var == "m_sbm") {
+      strata_nme = "Mother substance use"
+    }
+    if (strata_var == "m_smk") {
+      strata_nme = "Mother smoking"
+    }
+    
+    if ("survfit2" %in% class(cxph_adj_demo_mdls[[adj_mdl_nme]])) {
+      #   create plots from models
+      cxph_adj_demo_plts[[adj_mdl_nme]] <-
+        plot_sdc_smooth_survfit(
+          survfit_obj = cxph_adj_demo_mdls[[adj_mdl_nme]],
+          type = "risk",
+          method = "loess",
+          span = 0.15, #reduce to reduce smoothing
+          smooth_n = 25, #tends to affect the CIs
+          add_noise = T,
+          noise_scope = "tail",
+          noise_tail_n = 3,
+          noise_sd = 0.00005,
+          show_ci = T,
+          subtitle = strata_nme,
+          caption = paste0("Demography Adjusted Model (", mdl_nme, ")")
+        ) +
+        ggplot2::scale_x_continuous(#limits = c(0,11.5),
+                                    breaks = seq.int(0,10,2),
+                                    expand = expansion(add = 0.1)
+                                    ) #+
+        # ggplot2::scale_y_continuous(labels = scales::label_percent(accuracy = 0.01),
+        #                         expand = expansion(mult = 0.002)
+        #                         )
+      
+      ?scales::label_percent
+      
+      ## print all strata
+      # cx_mdls_multi_vars
+      
+      #   adjust plot's y coordinates of relevant exposures (by zooming)
+      if (strata_var == "m_mar_status") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.015))
+      }
+      if (strata_var == "m_age_cat") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.004))
+      }
+      if (strata_var == "m_edu") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.0085))#
+      }
+      if (strata_var == "c_sex") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.00175))#
+      }
+      if (strata_var == "m_hh_adult") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.003))
+      }
+      if (strata_var == "m_hh_child_depndt") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.003))
+      }
+      if (strata_var == "c_ethn") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.002))
+      }
+      if (strata_var == "m_hh_deprv_no") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.01)) #8
+      }
+      if (strata_var == "m_hh_deprv_dms") {
+        cxph_adj_demo_plts[[adj_mdl_nme]] <-
+          cxph_adj_demo_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.0085)) #8
+      }
+
+        #   plots needing wider width
+      if (strata_var %in% c("m_fam_status", "m_mar_status")) {
+        wdth = 20
+      } else if (strata_var %in% c("m_hh_deprv_dms", "m_ethnic")) {
+        wdth = 25
+      }
+      else{
+        wdth = 15
+      }
+  
+      #make outputs directory (if it doesn't already exist)
+      plt_dir <- paste0("outputs\\demo_adj_plts_sdc\\demo_adj_plts_", mdl_nme)
+      # cat("\n\tDirectory:", plt_dir, "\n")
+      
+      if (!dir.exists(plt_dir)) {
+        dir.create(plt_dir)
+      }
+      
+      ggsave(
+        filename = paste0(plt_dir, "\\", mdl_nme, "_", strata_var, ".png"),
+        plot = cxph_adj_demo_plts[[adj_mdl_nme]],
+        scale = 0.9,
+        height = 20,
+        width = wdth,
+        units = 'cm',
+        dpi = 600
+      )
+    }
+    
+    # NO LONGER NEEDED SINCE CAN'T PASS SAIL'S SDC
+    # if (j == inner_frml_no) {
+    #   cxph_adj_demo_tbls_all[[mdl_nme]] <-
+    #     bind_rows(cxph_adj_demo_tbls, .id = "model_name") %>%
+    #     select(-strata_label)
+    # }
+    
+  }
+  
+  if (i == outa_frml_no) {
+        # NO LONGER NEEDED SINCE CAN'T PASS SAIL'S SDC
+      #   save list of named df to excel spread sheet eith named tabs
+      # writexl::write_xlsx(cxph_adj_demo_tbls_all, path = "outputs\\cxph_adj_demo_tbls_all.xlsx")
+      
+      cat("Cleaning & saving workspace")
+      #     clean and save workspace
+      rm(
+        plt_dir,
+        fct_no,
+        strata_nme,
+        strata_var,
+        frml_strata,
+        adj_mdl_nme,
+        outa_frml,
+        outa_frml_no,
+        mdl_nme,
+        mdl_cnt,
+        inner_frml_no
+      )
+      gc()
+      # save.image()
+    }
+}
+  
+
+names(cxph_adj_demo_plts)
+```
+
+## Full Models
+```{r}
+
+# replace cx_mdls_multi_vars with cx_mdls_multi_vars
+seq_along(cx_mdls_multi_full)
+
+# print only formula to fit for documentation
+for (i in seq_along(cx_mdls_multi_full)) {
+  if (i == 1) {
+    outa_frml_no <- length(cx_mdls_multi_full)
+    cat("\nOuter formula (Total:", outa_frml_no, ")\n")
+    
+    cxph_adj_full_tbls_all <- list()
+    
+    #     ensure proper dataframe
+    ehr_cpr_cens11_cohrt_df <- as.data.frame(ehr_cpr_cens11_cohrt)
+  }
+  
+  #   prep formula, fit models, process & output coefficients
+  outa_frml <- paste0("Surv(c_age_1st_evnt, c_frst_cpr) ~ ",
+                      paste(cx_mdls_multi_full[[i]], collapse = " + "))
+  
+  cat("\n----------------------------\n")
+  mdl_nme <- names(cx_mdls_multi_full[i])
+  cat("Model Name:", mdl_nme)
+  cat("\n", i, as.formula(outa_frml) %>% deparse1())
+  
+  #   control for each factor as a grouping variable in the model
+  for (j in seq_along(cx_mdls_multi_full[[i]])) {
+    if (i == 1 & j == 1) {
+      inner_frml_no <- length(cx_mdls_multi_full[[i]])
+      cat("\n\tInner formula (Total:", inner_frml_no, ")\n")
+      
+      cxph_adj_full_mdls <- list()
+      cxph_adj_full_plts <- list()
+      cxph_adj_full_tbls <- list()
+    }
+    
+    #     stratifying variables (for adjusted model)
+    strata_var <- cx_mdls_multi_full[[i]][j]
+    #     name model of strata
+    adj_mdl_nme <- paste0(mdl_nme, ".", strata_var)
+    #     upgrade formula with strata
+    frml_strata <- paste0(outa_frml, " + strata(", strata_var, ")")
+    cat("\n\t", j, as.formula(frml_strata) %>% deparse1(), "\n")
+    
+    try(# using coxph + ggsurvfit package
+      #   create model
+      cxph_adj_full_mdls[[adj_mdl_nme]] <-
+        coxph(formula = as.formula(frml_strata), data = ehr_cpr_cens11_cohrt_df) %>%
+        ggsurvfit::survfit2())
+    
+    # NO LONGER NEEDED SINCE CAN'T PASS SAIL'S SDC
+    # if ("survfit2" %in% class(cxph_adj_full_mdls[[adj_mdl_nme]])) {
+    #   #   tidy tables of the model, for flexible plotting elsewhere
+    #   cxph_adj_full_tbls[[adj_mdl_nme]] <-
+    #     cxph_adj_full_mdls[[adj_mdl_nme]] %>%
+    #     tidy_survfit()
+    #   # full_mdl_adj_tbl
+    # }
+    
+    # class(cxph_adj_full_mdls[[1]])
+    
+    #     proper formating of print name
+    # list all potantial exposures/covariates
+    if (strata_var == "c_sex") {
+      strata_nme = "Child Sex"
+    }
+    if (strata_var == "c_ethn") {
+      strata_nme = "Child ethnicity"
+    }
+    if (strata_var == "c_cgm") {
+      strata_nme = "Child congenital anomalies"
+    }
+    if (strata_var == "c_ptb") {
+      strata_nme = "Child preterm birth"
+    }
+    if (strata_var == "c_bw") {
+      strata_nme = "Child birth weight"
+    }
+    if (strata_var == "m_age_cat") {
+      strata_nme = "Mother age at birth"
+    }
+    if (strata_var == "m_ethnic") {
+      strata_nme = "Mother ethnicity"
+    }
+    if (strata_var == "m_edu") {
+      strata_nme = "Mother eductation"
+    }
+    if (strata_var == "m_hh_child_depndt") {
+      strata_nme = "Mother HH dependent children"
+    }
+    if (strata_var == "m_hh_adult") {
+      strata_nme = "Mother HH adults"
+    }
+    if (strata_var == "m_mar_status") {
+      strata_nme = "Mother marital status"
+    }
+    if (strata_var == "m_fam_status") {
+      strata_nme = "Mother family status"
+    }
+    if (strata_var == "m_uk_stay_len") {
+      strata_nme = "Mother length of UK stay"
+    }
+    if (strata_var == "m_hh_deprv_no") {
+      strata_nme = "Mother HH deprivation count"
+    }
+    if (strata_var == "m_hh_deprv_dms") {
+      strata_nme = "Mother HH deprivation dimensions"
+    }
+    if (strata_var == "m_twns2011") {
+      strata_nme = "Mother Townsend 2011 quintile"
+    }
+    if (strata_var == "m_alc") {
+      strata_nme = "Mother alcohol problems"
+    }
+    if (strata_var == "m_lrn") {
+      strata_nme = "Mother learning difficulties/disabilities"
+    }
+    if (strata_var == "m_mnt") {
+      strata_nme = "Mother mental health issues"
+    }
+    if (strata_var == "m_sbm") {
+      strata_nme = "Mother substance use"
+    }
+    if (strata_var == "m_smk") {
+      strata_nme = "Mother smoking"
+    }
+    
+    if ("survfit2" %in% class(cxph_adj_full_mdls[[adj_mdl_nme]])) {
+      #   create plots from models
+      cxph_adj_full_plts[[adj_mdl_nme]] <-
+        plot_sdc_smooth_survfit(
+          survfit_obj = cxph_adj_full_mdls[[adj_mdl_nme]],
+          type = "risk",
+          method = "loess",
+          span = 0.15, #reduce to reduce smoothing
+          smooth_n = 25, #tends to affect the CIs
+          add_noise = T,
+          noise_scope = "tail",
+          noise_tail_n = 3,
+          noise_sd = 0.00005,
+          show_ci = T,
+          subtitle = strata_nme,
+          caption = paste0("Fully Adjusted Model (", mdl_nme, ")")
+        ) +
+        ggplot2::scale_x_continuous(#limits = c(0,11.5),
+                                    breaks = seq.int(0,10,2),
+                                    expand = expansion(add = 0.1)
+                                    )
+      
+      #   adjust plot's y coordinates of relevant exposures (by zooming)
+      if (strata_var == "m_mar_status") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.015))
+      }
+      if (strata_var == "m_age_cat") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.004))
+      }
+      if (strata_var == "m_edu") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.0085))#
+      }
+      if (strata_var == "c_sex") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.00175))#
+      }
+      if (strata_var == "m_hh_adult") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.003))
+      }
+      if (strata_var == "m_hh_child_depndt") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.003))
+      }
+      if (strata_var == "c_ethn") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.002))
+      }
+      if (strata_var == "m_hh_deprv_no") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.01)) #8
+      }
+      if (strata_var == "m_hh_deprv_dms") {
+        cxph_adj_full_plts[[adj_mdl_nme]] <-
+          cxph_adj_full_plts[[adj_mdl_nme]] + coord_cartesian(ylim = c(0, 0.0085)) #8
+      }
+      
+      
+      #   plots needing wider width
+      if (strata_var %in% c("m_fam_status", "m_mar_status")) {
+        wdth = 20
+      } else if (strata_var %in% c("m_hh_deprv_dms", "m_ethnic")) {
+        wdth = 25
+      }
+      else{
+        wdth = 15
+      }
+      
+      #make outputs directory (if it doesn't already exist)
+      plt_dir <- paste0("outputs\\full_adj_plts_sdc\\full_adj_plts_", mdl_nme)
+      # cat("\n\tDirectory:", plt_dir, "\n")
+      
+      if (!dir.exists(plt_dir)) {
+        dir.create(plt_dir)
+      }
+      
+      ggsave(
+        filename = paste0(plt_dir, "\\", mdl_nme, "_", strata_var, ".png"),
+        plot = cxph_adj_full_plts[[adj_mdl_nme]],
+        scale = 0.9,
+        height = 20,
+        width = wdth,
+        units = 'cm',
+        dpi = 600
+      )
+    }
+    
+    # NO LONGER NEEDED SINCE CAN'T PASS SAIL'S SDC
+    # if (j == inner_frml_no) {
+    #   cxph_adj_full_tbls_all[[mdl_nme]] <-
+    #     bind_rows(cxph_adj_full_tbls, .id = "model_name") %>%
+    #     select(-strata_label)
+    # }
+    
+  }
+  
+  if (i == outa_frml_no) {
+    # NO LONGER NEEDED SINCE CAN'T PASS SAIL'S SDC
+    #   save list of named df to excel spread sheet eith named tabs
+    # writexl::write_xlsx(cxph_adj_full_tbls_all, path = "outputs\\full_adj_plts_sdc\\cxph_adj_full_tbls_all_sdc.xlsx")
+    
+    cat("Cleaning & saving workspace")
+    #     clean and save workspace
+    rm(
+      plt_dir,
+      fct_no,
+      strata_nme,
+      strata_var,
+      frml_strata,
+      adj_mdl_nme,
+      outa_frml,
+      outa_frml_no,
+      mdl_nme,
+      mdl_cnt,
+      inner_frml_no
+    )
+    gc()
+    # save.image()
+  }
+}
+
+cxph_adj_full_tbls_all[[1]] %>%
+  glimpse
+
+```
+
+## Join Survival curves: unadj, demo adj, full adj
+### Deprivation Domains
+```{r}
+
+# unadj
+names(all_klpn_plts)
+
+# demo adj models
+names(cxph_adj_demo_plts)
+
+# full models
+names(cxph_adj_full_plts)
+
+# stitch_hh_dprv_no
+m_hh_deprv_no_stp_adj <- 
+  ((all_klpn_plts[["m_hh_deprv_no"]] + labs(
+    title = "Count of household deprivation dimensions",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.m_hh_deprv_no"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.m_hh_deprv_no"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Count of HH deprivation dimensions",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\m_hh_deprv_no_stp_adj.png",
+#   plot = m_hh_deprv_no_stp_adj,
+#   scale = 0.75,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+# stitch_hh_dprv_combinations
+m_hh_deprv_dms_stp_adj <- 
+  ((all_klpn_plts[["m_hh_deprv_dms"]] + labs(
+    title = "Combinations of household deprivation dimensions",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2b.m_hh_deprv_dms"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2b.m_hh_deprv_dms"]]) + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  )) +
+    plot_annotation(title = "Combinations of HH deprivation dimensions",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\m_hh_deprv_dms_stp_adj.png",
+#   plot = m_hh_deprv_dms_stp_adj,
+#   scale = 0.75,
+#   height = 25,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# ) 
+
+# ?ggsave
+
+# save full risk curves
+surv_hh_deprv_all_stp_adj <-
+  m_hh_deprv_no_stp_adj / m_hh_deprv_dms_stp_adj
+
+ggsave(
+  filename = "outputs\\surv_hh_deprv_all_stp_adj.png",
+  plot = surv_hh_deprv_all_stp_adj,
+  scale = 0.6,
+  height = 50,
+  width = 45,
+  units = 'cm',
+  dpi = 900
+)
+
+# save.image()
+```
+
+### Child's demography
+c_sex + c_ethn + m_age_cat + m_edu + m_mar_status + m_hh_child_depndt + m_hh_adult
+```{r}
+# risk curves for other demographic variables
+#Child's Sex
+surv_c_sex_stp_adj <- 
+  ((all_klpn_plts[["c_sex"]] + labs(
+    title = "Child Sex",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.c_sex"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.c_sex"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Child Sex",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\surv_c_sex_stp_adj.png",
+#   plot = surv_c_sex_stp_adj,
+#   scale = 0.7,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+#Child ethnicity
+surv_c_ethn_stp_adj <- 
+  ((all_klpn_plts[["c_ethn"]] + labs(
+    title = "Child Ethnicity",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.c_ethn"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.c_ethn"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Child Ethnicity",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\surv_c_ethn_stp_adj.png",
+#   plot = surv_c_ethn_stp_adj,
+#   scale = 0.7,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+# All Child demography
+surv_c_demo_all_stp_adj <- (surv_c_sex_stp_adj / surv_c_ethn_stp_adj) +
+    plot_layout(axis_titles = 'collect')
+
+ggsave(
+  filename = "outputs\\surv_c_demo_all_stp_adj.png",
+  plot = surv_c_demo_all_stp_adj,
+  scale = 0.6,
+  height = 45,
+  width = 45,
+  units = 'cm',
+  dpi = 900
+)
+
+gc()
+# save.image()
+```
+
+### Mother's Demography
+```{r}
+#Mother's Age
+surv_m_age_stp_adj <- 
+  ((all_klpn_plts[["m_age_cat"]] + labs(
+    title = "Mother's Age",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.m_age_cat"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.m_age_cat"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Mother's Age",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\surv_m_age_stp_adj.png",
+#   plot = surv_m_age_stp_adj,
+#   scale = 0.7,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+#Mother's Education
+surv_m_edu_stp_adj <- 
+  ((all_klpn_plts[["m_edu"]] + labs(
+    title = "Mother's Education",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.m_edu"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.m_edu"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Mother's Education",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\surv_m_edu_stp_adj.png",
+#   plot = surv_m_edu_stp_adj,
+#   scale = 0.7,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+#Mother's Marital Status
+surv_mar_status_stp_adj <- 
+  ((all_klpn_plts[["m_mar_status"]] + labs(
+    title = "Mother's Marital Status",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.m_mar_status"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.m_mar_status"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Mother's Marital Status",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\surv_mar_status_stp_adj.png",
+#   plot = surv_mar_status_stp_adj,
+#   scale = 0.7,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+# All mother demography
+surv_m_demo_all_stp_adj <-
+  surv_m_age_stp_adj / surv_m_edu_stp_adj / surv_mar_status_stp_adj
+
+ggsave(
+  filename = "outputs\\surv_m_demo_all_stp_adj.png",
+  plot = surv_m_demo_all_stp_adj,
+  scale = 0.5,
+  height = 70,
+  width = 45,
+  units = 'cm',
+  dpi = 900
+)
+```
+
+### Household Composition
+```{r}
+#Number of dependent children in HH
+surv_hh_child_depndt_stp_adj <- 
+  ((all_klpn_plts[["m_hh_child_depndt"]] + labs(
+    title = "Number of Dependent Children in Household",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.m_hh_child_depndt"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.m_hh_child_depndt"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Number of Dependent Children in Household",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\surv_hh_child_depndt_stp_adj.png",
+#   plot = surv_hh_child_depndt_stp_adj,
+#   scale = 0.7,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+#Number of Adults in HH
+surv_hh_adult_stp_adj <- 
+  ((all_klpn_plts[["m_hh_adult"]] + labs(
+    title = "Number of Adults in Household",
+    subtitle = "Unadjusted"
+  )) + (cxph_adj_demo_plts[["demo2a.m_hh_adult"]] + labs(
+    subtitle = "Demography adjusted",
+    caption = NULL
+  )) + (cxph_adj_full_plts[["full_2a.m_hh_adult"]] + labs(
+    subtitle = "Fully adjusted",
+    caption = NULL
+  ))
+  ) +
+    plot_annotation(title = "Number of Adults in Household",
+                    theme = theme(plot.title = element_text(size=14))
+                    ) +
+    plot_layout(guides = 'collect',
+                axis_titles = "collect") &
+    theme(legend.position='bottom')
+
+# ggsave(
+#   filename = "outputs\\surv_hh_adult_stp_adj.png",
+#   plot = surv_hh_adult_stp_adj,
+#   scale = 0.7,
+#   height = 20,
+#   width = 45,
+#   units = 'cm',
+#   dpi = 900
+# )
+
+# All HH Composition
+surv_hh_comp_all_stp_adj <-
+  surv_hh_child_depndt_stp_adj / surv_hh_adult_stp_adj
+
+ggsave(
+  filename = "outputs\\surv_hh_comp_all_stp_adj.png",
+  plot = surv_hh_comp_all_stp_adj,
+  scale = 0.5,
+  height = 45,
+  width = 45,
+  units = 'cm',
+  dpi = 900
+)
+
+save.image()
+```
+
+# Epilogue

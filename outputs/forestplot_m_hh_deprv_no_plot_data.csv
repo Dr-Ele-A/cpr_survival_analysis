@@ -1,0 +1,16 @@
+model,level,hr,ci_low,ci_high,p,n,n_perc,p_group,hr_ci,y_base,level_label,y_offset,y_plot
+Unadjusted,0,1,NA,NA,NA,51909,NA,p < 0.01 / reference,1.00 (reference),5,0 (reference),0.15,5.15
+Demography adjusted,0,1,NA,NA,NA,NA,"51,895 (58.19%)",p < 0.01 / reference,1.00 (reference),5,0 (reference),0,5
+Fully adjusted,0,1,NA,NA,NA,NA,"51,895 (58.19%)",p < 0.01 / reference,1.00 (reference),5,0 (reference),-0.15,4.85
+Unadjusted,1,4.579869829974261,3.9764131689543665,5.274906496958436,0,23308,NA,p < 0.01 / reference,"4.58 (3.98, 5.27)",4,1 deprivation indicator,0.15,4.15
+Demography adjusted,1,2.102837868184666,1.786167890715058,2.475650314204897,0,NA,"23,308 (26.14%)",p < 0.01 / reference,"2.10 (1.79, 2.48)",4,1 deprivation indicator,0,4
+Fully adjusted,1,1.883150641705912,1.599903602453334,2.216543755460933,2.731148640577885e-14,NA,"23,308 (26.14%)",p < 0.01 / reference,"1.88 (1.60, 2.22)",4,1 deprivation indicator,-0.15,3.85
+Unadjusted,2,7.785703674734004,6.702431405705703,9.044058497810786,0,10100,NA,p < 0.01 / reference,"7.79 (6.70, 9.04)",3,2 deprivation indicators,0.15,3.15
+Demography adjusted,2,3.207419643257094,2.688065024791779,3.827117526202089,0,NA,"10,100 (11.33%)",p < 0.01 / reference,"3.21 (2.69, 3.83)",3,2 deprivation indicators,0,3
+Fully adjusted,2,2.604422090796032,2.182219181529281,3.108310331262369,0,NA,"10,100 (11.33%)",p < 0.01 / reference,"2.60 (2.18, 3.11)",3,2 deprivation indicators,-0.15,2.85
+Unadjusted,3,12.472569409069584,10.486321453298002,14.835038994072836,0,3486,NA,p < 0.01 / reference,"12.47 (10.49, 14.84)",2,3 deprivation indicators,0.15,2.15
+Demography adjusted,3,4.71610644129895,3.840068595698047,5.79199548429378,0,NA,"3,486 (3.91%)",p < 0.01 / reference,"4.72 (3.84, 5.79)",2,3 deprivation indicators,0,2
+Fully adjusted,3,3.421480259440044,2.781257032812818,4.209077775849628,0,NA,"3,486 (3.91%)",p < 0.01 / reference,"3.42 (2.78, 4.21)",2,3 deprivation indicators,-0.15,1.85
+Unadjusted,4,16.279777567113847,11.354954508866411,23.340574145652106,0,388,NA,p < 0.01 / reference,"16.28 (11.35, 23.34)",1,4 deprivation indicators,0.15,1.15
+Demography adjusted,4,5.781914550531737,3.940744133456367,8.483305370127951,0,NA,388 (0.44%),p < 0.01 / reference,"5.78 (3.94, 8.48)",1,4 deprivation indicators,0,1
+Fully adjusted,4,4.044763741780881,2.752785199535466,5.943113080376214,1.098676705169055e-12,NA,388 (0.44%),p < 0.01 / reference,"4.04 (2.75, 5.94)",1,4 deprivation indicators,-0.15,0.85

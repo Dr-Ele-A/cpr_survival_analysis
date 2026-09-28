@@ -1,0 +1,57 @@
+# R and RStudio state
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+**/.Rhistory
+.Renviron
+
+# R/Quarto build artefacts
+*_cache/
+*_files/
+.quarto/
+renv/library/
+renv/staging/
+
+# Row-level or environment-specific research data
+data/
+sail_sdc/data/
+*.qs
+*.qsm
+*.rds
+*.RDS
+*.rda
+*.RData
+*.sas7bdat
+*.sav
+*.dta
+*.parquet
+*.feather
+*.fst
+*.db
+*.sqlite
+*.duckdb
+
+# Secure output staging: allowlist only candidate reproducibility files;
+# confirm formal disclosure approval before publication
+sail_sdc/outputs/*
+!sail_sdc/outputs/README.md
+!sail_sdc/outputs/paf_dprv_count.xlsx
+!sail_sdc/outputs/paf_dprv_dms.xlsx
+!sail_sdc/outputs/bivar_coxph_cpr_all.csv
+!sail_sdc/outputs/multivar_coxph_cpr_demo.xlsx
+!sail_sdc/outputs/multivar_coxph_cpr_full.xlsx
+
+# Secrets, credentials, and local configuration
+.env
+.env.*
+*.pem
+*.key
+
+# Office, editor, and operating-system temporary files
+~$*
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+desktop.ini
