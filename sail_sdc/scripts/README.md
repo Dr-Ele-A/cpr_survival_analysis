@@ -1,6 +1,6 @@
 # Secure analysis scripts
 
-These scripts contain SAIL-only workflow code. They may be reviewed publicly as code, subject to project governance, but their data dependencies must remain inside the trusted research environment.
+These scripts contain SAIL-only workflow code. They are published for analytical transparency, while their row-level data dependencies remain inside the trusted research environment.
 
 ## Files
 
@@ -21,10 +21,10 @@ Main secure analysis notebook. It:
 - produces descriptive summaries and association diagnostics;
 - fits unadjusted, demography-adjusted, and fully adjusted Cox models;
 - checks proportional hazards;
-- estimates graphPAF-based, category-specific counterfactual impact fractions;
-- creates survival and diagnostic figures for disclosure-control review.
+- estimates graphPAF-based, category-specific counterfactual attributable fractions;
+- creates survival and diagnostic figures for disclosure-controlled public release.
 
-The notebook contains SAIL drive paths and interactive operations. It is not expected to knit sequentially outside its original environment. In particular, it sources the PAF helper from a hard-coded `P:` path even though a local copy is retained here.
+The notebook contains SAIL drive paths and interactive operations. It is not expected to knit sequentially outside its original environment.
 
 ### `calc_deprv_counterfactual_paf_graphpaf.R`
 
@@ -48,7 +48,6 @@ The two deprivation representations are modelled separately: `demo2a`/`full_2a` 
 
 ## Known execution notes
 
-- The main R Markdown code calls `save.image()` repeatedly; workspace images must remain untracked.
-- One exploratory call, `calc_deprv_level_paf(deprv_dms_to_none)`, does not match the helper signature and should not be relied upon in a clean sequential knit.
+- The main R Markdown code calls `save.image()` repeatedly; workspace images remain untracked.
 - Public plotting does not source this helper, so it does not require `graphPAF` or secure model objects.
-- The profile-variable missing/no-code derivation requires review before public release; see `../README.md`.
+- The household-deprivation profile uses `None` as an operational category that can include observed non-deprivation alongside missing, unlinked, or no-code records; this known source-data limitation is documented in `../outputs/README.md`.

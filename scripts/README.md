@@ -1,6 +1,6 @@
 # Public plotting scripts
 
-The scripts in this folder run outside the SAIL trusted research environment. They use only aggregate or model-derived inputs prepared for disclosure-controlled export from `sail_sdc/outputs/` and write candidate public figures to `outputs/`. Confirm the approval status recorded outside this repository before publication.
+The scripts in this folder run outside the SAIL trusted research environment. They use only SAIL-cleared aggregate or model-derived inputs from `sail_sdc/outputs/` and write public figures to `outputs/`.
 
 Each script discovers the repository root by locating `cpr_survival_analysis.Rproj` from its own file path. It can be invoked from the project root as shown below, or from another working directory if the command supplies a valid path to the script. No script reads individual-level data.
 
@@ -28,17 +28,17 @@ On the validation machine, R 4.5.1 was installed at `C:/Program Files/R/R-4.5.1/
 
 ## Packages
 
-- Impact-fraction plots: `dplyr`, `ggplot2`, `patchwork`, `readxl`, `scales`, and `stringr`.
+- Attributable-fraction plots: `dplyr`, `ggplot2`, `patchwork`, `readxl`, `scales`, and `stringr`.
 - Forest plots: `tidyverse` and `readxl`.
 
 The public PAF script reconstructs the plotting layer only. It does not recalculate population attributable fractions and therefore does not require `graphPAF`. Estimates are filtered to age six (`Time == 6`), converted from proportions to percentages for display, and plotted with the first three colours from `RColorBrewer::Dark2`: `#1B9E77`, `#D95F02`, and `#7570B3`. A positive value is the model-estimated relative reduction in age-six CPR risk under the named counterfactual reassignment; it is not a demonstrated intervention effect.
 
 ## Output fidelity
 
-The PAF layouts, labels, factor order, dimensions, and styling are extracted from `sail_sdc/scripts/ea_cpr_reg_surv_sdc_cln_v2.Rmd` and `calc_deprv_counterfactual_paf_graphpaf.R`. PNGs are written at 300 dpi: 18 × 6 inches for deprivation counts and 14 × 15 inches for deprivation-domain profiles. PDFs use the same physical dimensions.
+The PAF layouts, labels, factor order, dimensions, and styling are extracted from `sail_sdc/scripts/ea_cpr_reg_surv_sdc_cln_v2.Rmd` and `sail_sdc/scripts/calc_deprv_counterfactual_paf_graphpaf.R`. PNGs are written at 300 dpi: 18 × 6 inches for deprivation counts and 14 × 15 inches for deprivation-domain profiles. PDFs use the same physical dimensions.
 
 Small byte-level rendering differences can arise across R versions, graphics devices, fonts, and package versions. Validation should therefore check dimensions, labels, values, ordering, palette, and visual equivalence rather than requiring identical file hashes.
 
 ## Input safety
 
-Do not point these scripts at row-level or unscreened secure exports. The version-control allowlist is deliberately limited to the five files needed for these figures. Confirm disclosure-control approval before publishing any replacement input or output.
+Do not point these scripts at row-level data. The repository inputs are disclosure-controlled public outputs; the scripts require only the five aggregate/model-derived files listed above.
