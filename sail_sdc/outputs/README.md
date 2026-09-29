@@ -1,8 +1,6 @@
 # Released SAIL outputs and variable dictionary
 
-Every analytical output currently stored in this folder is disclosure-controlled and cleared by SAIL for public use and publication. The folder contains no row-level linked data, and none of its contents is excluded from Git.
-
-The catalogue below describes the released files. The integrated variable dictionary is derived from repository code, variable labels, exported-table metadata, and the accompanying manuscript. It does not infer undocumented source-system definitions; where the repository does not contain a codebook or category mapping, that limitation is stated explicitly.
+Every analytical output currently stored in this folder is disclosure-controlled and cleared by SAIL for public use and publication. The folder contains no row-level linked data. The catalogue below describes the released files. The integrated variable dictionary is derived from repository code, variable labels, exported-table metadata, and the associated manuscript.
 
 ## Output catalogue
 
@@ -41,6 +39,20 @@ The catalogue below describes the released files. The integrated variable dictio
 | `surv_m_demo_all_stp_adj.png` | Stitched maternal-demographic survival/risk curves |
 | `surv_hh_comp_all_stp_adj.png` | Stitched household-composition survival/risk curves |
 | `surv_hh_deprv_all_stp_adj.png` | Stitched household-deprivation survival/risk curves |
+
+### Key adjusted registration-risk curves
+
+#### Household composition
+
+![Adjusted CPR-registration risk curves by household composition](surv_hh_comp_all_stp_adj.png)
+
+These curves compare model-estimated risk of first CPR registration by the numbers of dependent children and adults in the household across unadjusted, demography-adjusted, and fully adjusted specifications. They make household-structure patterning visible and provide important context for interpreting deprivation-related differences in registration risk.
+
+#### Maternal demographic characteristics
+
+![Adjusted CPR-registration risk curves by maternal demographic characteristics](surv_m_demo_all_stp_adj.png)
+
+These curves compare model-estimated risk of first CPR registration by maternal age, highest qualification, and marital or civil-partnership status across the same adjustment stages. Their persistence or attenuation after adjustment underscores the salience of maternal demographic patterning and contextualizes the study's household-deprivation estimates.
 
 ## Variable dictionary
 
@@ -110,6 +122,8 @@ The count and profile are used in separate models because the count is determine
 | `m_htn` | Timing of recorded maternal hypertension relative to pregnancy | `never`, `pre-pregnancy`, `pregnancy`; described but not included in the fully adjusted model list |
 | `m_sbm` | Timing of recorded maternal substance use relative to pregnancy | `never`, `pre-pregnancy`, `pregnancy` |
 | `m_smk` | Harmonized maternal smoking status | `Non`, `Ex`, `Smk`, `Unknown` |
+
+**m_edu** (renamed from `Highest qualification, HLQPUK11`), describes the substantive attainment categories that represent the highest educational qualification reported rather than years of schooling. In broad terms, `Level 1` covers lower secondary or foundation qualifications (for example, one to four GCSEs or equivalent); `Level 2` covers five or more GCSE passes at the former A*–C standard or equivalent intermediate vocational qualifications; `apprenticeship` identifies a recognised apprenticeship; `Level 3` covers advanced secondary qualifications such as two or more A levels or equivalent; and `Level 4 or above` covers degree-level, higher-degree and professional qualifications. `Other` includes vocational or work-related qualifications and qualifications gained outside the UK whose level was not stated or could not be assigned to the standard hierarchy. These categories are UK-specific equivalence groupings and should not be read as direct international schooling-year equivalents. Detailed mappings are available from the Office for National Statistics (ONS).
 
 ### Model roles
 
@@ -194,31 +208,6 @@ The reconstructed `sail_sdc/scripts/5a - make cohort and events.R` selects the f
 | `c_gp_first_att_date` | Child first GP attendance date |
 | `c_gp_att_n` | Child GP attendance count |
 | `c_cgm_flg`, `c_cgm_cat`, `c_cgm_date` | Child congenital-anomaly flag, source category, and date |
-
-#### Looked-after, death, and residence fields
-
-| Variable | Code-supported description |
-|--|---|
-| `c_lac_first_start_date` | First looked-after episode start date |
-| `c_lac_first_start_reason_code` | Code for first looked-after start reason; code set not included |
-| `c_lac_first_start_reason_cat` | Category for first looked-after start reason |
-| `c_lac_first_legal_status` | Legal status at first looked-after episode |
-| `c_lac_first_placement` | First looked-after placement field |
-| `c_lac_first_end_date` | First looked-after episode end date |
-| `c_lac_first_end_reason_code` | Code for first looked-after end reason; code set not included |
-| `c_lac_first_end_reason_cat` | Category for first looked-after end reason |
-| `c_lac_any_short_term` | Indicator that any looked-after episode was short term |
-| `c_death_date` | Child death date |
-| `c_death_neonatal_flg` | Neonatal-death flag |
-| `c_death_birth_asphyxia_flg` | Birth-asphyxia death flag |
-| `c_death_short_gestation_flg` | Short-gestation death flag |
-| `c_death_sids_flg` | SIDS death flag |
-| `c_death_diag_1_cd` | First recorded death-diagnosis code; coding system not specified here |
-| `c_residence_start_date` | Child residence spell start date |
-| `c_residence_end_date_1day` | Residence end date under the upstream 1-day rule; exact construction not present |
-| `c_residence_end_date_28day` | Residence end date under the upstream 28-day rule; exact construction not present |
-
-The upstream script also creates `is_cla`, `is_cla_cat`, `has_lacw_alf`, and `n_alf` while preparing the looked-after dataset. `is_cla_cat` distinguishes not looked after versus looked after in 2016–2018; `n_alf` is used to retain unique child linkage fields.
 
 ### Exported-table fields
 

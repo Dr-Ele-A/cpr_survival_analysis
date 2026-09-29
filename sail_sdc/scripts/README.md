@@ -6,7 +6,9 @@ These scripts contain SAIL-only workflow code. They are published for analytical
 
 ### `5a - make cohort and events.R`
 
-Reconstructed upstream cohort-building code. It reads five row-level `.qs` inputs covering child birth, looked-after status, child/maternal health, and maternal household information; joins them through encrypted linkage fields; selects cohort variables; and writes `data/d_cohort_clean.qs`.
+Reconstructed upstream cohort-building code. It reads five row-level `.qs` inputs covering child birth, child and maternal health, maternal household information, and a legacy looked-after dataset; joins them through encrypted linkage fields; selects upstream cohort fields; and writes `data/d_cohort_clean.qs`.
+
+The main analysis notebook explicitly drops every `c_lac_` field before deriving the study cohort, so the legacy looked-after fields are retained here only as upstream code provenance and are not analysis variables in the present study. Of the child-death fields selected upstream, only `c_death_date` is used downstream, to define death within follow-up; the additional child-death flags and residence-spell fields are not used by the current analysis.
 
 The file is not standalone: package/helper setup is absent, the original `r_clear_and_load.r` source call is commented, and the upstream SQL/R preparation files are not in this repository. Treat it as provenance for variable lineage, not as a public reproduction script.
 

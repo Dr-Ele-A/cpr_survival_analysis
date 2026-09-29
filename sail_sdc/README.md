@@ -23,7 +23,7 @@ See [scripts/README.md](scripts/README.md) and [outputs/README.md](outputs/READM
 
 ## Release-formatted survival figure
 
-`outputs/surv_hh_deprv_all_stp_adj.png` was produced for public release after applying LOESS smoothing (span 0.15, 25 fitted points per stratum) and small Gaussian perturbations at the final three time points. The changes affect only the display, not the fitted models. Because the secure code did not set a random seed for the perturbations, the public repository uses a byte-identical copy at `../outputs/surv_hh_deprv_all_stp_adj.png` rather than attempting to recreate it outside SAIL. Both copies have SHA-256 `A10394B16127FA2DE061DBC6674FC180B6BD1EB5DCD28E18A8963097D69D99CB`.
+`outputs/surv_hh_deprv_all_stp_adj.png` was produced for public release after applying LOESS smoothing (span 0.15, 25 fitted points per stratum) and small Gaussian perturbations at the final three time points. The changes affect only the display, not the fitted models. Because the secure code did not set a random seed for the perturbations, the public repository uses an identical copy at `../outputs/surv_hh_deprv_all_stp_adj.png` rather than attempting to recreate it outside SAIL.
 
 ## Household-deprivation data-quality limitation
 
@@ -33,4 +33,4 @@ In the implemented derivation, helper values retain domain names for source valu
 
 ## Environment-specific dependencies
 
-The main R Markdown file references SAIL-mounted `S:` and `P:` paths and saves R workspaces during execution. These paths and workspace objects are intentionally not portable. The `.RData`, `.Rhistory`, and `.Rproj.user/` files found in the local project are ignored and should not be uploaded.
+The main R Markdown file references SAIL-mounted `S:` and `P:` paths and saves R workspaces during execution. These paths and workspace objects are intentionally not portable.
