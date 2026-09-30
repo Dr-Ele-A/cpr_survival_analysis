@@ -19,11 +19,11 @@ This repository documents a population-based survival analysis of household depr
 - **Follow-up:** birth to first observed CPR registration, death, or 31 May 2021.
 - **Primary exposures:** maternal household deprivation count (zero to four domains) and the recorded combination of education, employment, health/disability, and housing deprivation.
 - **Outcome:** first observed CPR registration for any recorded reason.
-- **Analysis:** Cox proportional-hazards models with child age as the time scale; staged adjustment; risk curves; proportional-hazards diagnostics; and age-six scenario-specific population attributable fractions (PAFs).
+- **Analysis:** Cox proportional-hazards models with child age as the time scale; staged adjustment; risk curves; proportional-hazards diagnostics; and scenario-specific population attributable fractions (PAFs).
 
 The outcome reflects recorded statutory activity, not the onset or prevalence of child maltreatment. The analyses are observational. Adjustment stages describe conditional associations and are not a causal decomposition.
 
-Here, a PAF is the model-estimated relative change from observed age-six CPR risk to risk under one stated counterfactual reassignment—for example, moving a specified deprivation-count category to a lower category while leaving other categories unchanged. A positive 5% estimate means the model predicts approximately 5% lower age-six risk under that scenario than under the observed exposure distribution; a negative estimate means higher predicted risk. These conditional scenario contrasts are not observed intervention effects or percentages of registrations proven preventable.
+Here, a PAF is the model-estimated relative change from observed CPR risk to risk under one stated counterfactual reassignment. For example, moving a specified deprivation-count category to a lower category while leaving other categories unchanged. A positive 5% estimate means the model predicts approximately 5% lower CPR registration risk under that scenario than under the observed exposure distribution; a negative estimate means higher predicted risk. These conditional scenario contrasts are not observed intervention effects or percentages of registrations proven preventable.
 
 ## Key outputs
 
@@ -31,24 +31,24 @@ Here, a PAF is the model-estimated relative change from observed age-six CPR ris
 
 ![Forest plot of hazard ratios for combinations of household deprivation domains across unadjusted, demography-adjusted, and fully adjusted models](outputs/forestplot_m_hh_deprv_dms_adjustment_stack.png)
 
-Points show hazard ratios (HRs) or adjusted hazard ratios (aHRs); horizontal intervals show 95% confidence intervals. The public forest-plot script uses the same colour mapping as the population attributable-fraction figures.
+Points show hazard ratios (HRs) or adjusted hazard ratios (aHRs); horizontal intervals show 95% confidence intervals.
 
 ### Registration-risk trajectories by deprivation count and profile
 
 ![Six-panel cumulative-risk display for first observed CPR registration by deprivation count and deprivation-domain profile](outputs/surv_hh_deprv_all_stp_adj.png)
 
-This is a public copy of the disclosure-controlled figure produced in SAIL. The curves were smoothed for disclosure control and include small tail perturbations applied to the display only. They are not competing-risk cumulative-incidence estimates, and the adjusted panels are conditional model predictions rather than population-standardized risks.
+This is a public copy of the disclosure-controlled figure produced in SAIL. The curves were smoothed for disclosure control and include small tail perturbations applied to the display only. They are not competing-risk cumulative incidence estimates, and the adjusted panels are conditional model predictions rather than population-standardized risks.
 
 ## Secure-to-public workflow
 
-| Stage | Location | What happens | Public reproducibility boundary |
-|---|---|---|---|
+| Stage | Location | What happens                                                                                                                   | Public reproducibility boundary |
+|---|---|--------------------------------------------------------------------------------------------------------------------------------|---|
 | Linked-data preparation and modelling | `sail_sdc/scripts/` | Cohort construction, Census linkage, variable derivation, Cox models, diagnostics, attributable fractions, and survival curves | Requires approved access to individual-level linked data in SAIL; cannot be reproduced from this repository alone |
-| Disclosure-controlled outputs | `sail_sdc/outputs/` | SAIL-cleared aggregate tables, model summaries, diagnostic plots, formatted documents, and figures | All analytical files are public releases and available to Git; none contains row-level data |
-| Public figure generation | `scripts/` | Released aggregate/model tables are converted into forest plots and attributable-fraction figures | Reproducible outside SAIL with R and the repository inputs |
-| Public deliverables | `outputs/` | PNG/PDF figures and auditable plotting datasets | Directly displayable and reusable with the accompanying interpretation notes |
+| Disclosure-controlled outputs | `sail_sdc/outputs/` | SAIL-cleared aggregate tables, model summaries, diagnostic plots, formatted documents, and figures                             | All analytical files are public releases and available to Git; none contains row-level data |
+| Public figure generation | `scripts/` | Released aggregate/model tables are converted into forest plots and attributable fraction figures                              | Reproducible outside SAIL with R and the repository inputs |
+| Public deliverables | `outputs/` | PNG/PDF figures and auditable plotting datasets                                                                                | Directly displayable and reusable with the accompanying interpretation notes |
 
-Individual-level data, linkage identifiers, dates, small-cell working tables, and R workspace images are not part of the public workflow. The `.gitignore` excludes common row-level data formats, local R state, secrets, and temporary files; it does not exclude `sail_sdc/outputs/`.
+Individual-level data, linkage identifiers, dates, small-cell working tables, and R workspace images are not part of the public workflow.
 
 ## Repository structure (abridged)
 
@@ -73,7 +73,7 @@ Individual-level data, linkage identifiers, dates, small-cell working tables, an
         └── ... SAIL-cleared tables, documents, and figures
 ```
 
-See the folder READMEs for file-level inputs, outputs, and execution constraints. The integrated [output catalogue and variable dictionary](sail_sdc/outputs/README.md#variable-dictionary) documents released files, analysis variables, and exported-table fields using only definitions supported by the code, manuscript, labels, or observed metadata.
+See the folder READMEs for file-level inputs, outputs, and execution constraints. The integrated [output catalogue and variable dictionary](sail_sdc/outputs/README.md#variable-dictionary) documents released files, analysis variables, and exported table fields using only definitions supported by the code, manuscript, labels, or metadata.
 
 ## Reproducing public figures
 
@@ -89,11 +89,11 @@ The scripts locate the project root from their own file path. They can therefore
 
 Required public packages are `tidyverse`, `readxl`, `patchwork`, and their dependencies. The plotting scripts were validated with R 4.5.1, tidyverse 2.0.0, readxl 1.4.5, ggplot2 3.5.2, patchwork 1.3.2, and scales 1.4.0. Package versions are not currently locked; consult the generated session-information files when exact rendering differences matter.
 
-The public PAF script reads the two released workbooks at `sail_sdc/outputs/paf_dprv_count.xlsx` (sheets `dprv_no_2_non`, `dprv_rdtn_by1`, and `dprv_rdtn_by2`) and `sail_sdc/outputs/paf_dprv_dms.xlsx` (sheets `dprv_dms_2_non` and `dprv_dms_rmvl`). It does not require `graphPAF` or individual-level data. The forest scripts read the released bivariate and multivariable model tables in the same directory. Input hashes are recorded in [sail_sdc/outputs/README.md](sail_sdc/outputs/README.md). See [scripts/README.md](scripts/README.md) for the complete file contract.
+The public PAF script reads the two released workbooks at `sail_sdc/outputs/paf_dprv_count.xlsx` (sheets `dprv_no_2_non`, `dprv_rdtn_by1`, and `dprv_rdtn_by2`) and `sail_sdc/outputs/paf_dprv_dms.xlsx` (sheets `dprv_dms_2_non` and `dprv_dms_rmvl`). It does not require `graphPAF` or individual-level data. The forest scripts read the released bivariate and multivariable model tables in the same directory. Inputs are recorded in [sail_sdc/outputs/README.md](sail_sdc/outputs/README.md). See [scripts/README.md](scripts/README.md) for the complete file contract.
 
 ## Data access, disclosure control, and responsible use
 
-Individual-level linked data are held in the SAIL Databank and are not publicly available. Access requires the relevant information-governance and project approvals. This repository does not provide, and must not be used to reconstruct, person-level data.
+Individual-level linked data are held in the SAIL Databank and are not publicly available. Access requires the relevant information governance and project approvals. This repository does not provide, and must not be used to reconstruct, person-level data.
 
 Every analytical output currently present in `sail_sdc/outputs/` has completed SAIL disclosure control and is cleared for public use and publication. These files contain aggregate or model-derived material only and are available to Git.
 

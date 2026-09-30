@@ -50,6 +50,5 @@ The two deprivation representations are modelled separately: `demo2a`/`full_2a` 
 
 ## Known execution notes
 
-- The main R Markdown code calls `save.image()` repeatedly; workspace images remain untracked.
 - Public plotting does not source this helper, so it does not require `graphPAF` or secure model objects.
-- The household-deprivation profile uses `None` as an operational category that can include observed non-deprivation alongside missing, unlinked, or no-code records; this known source-data limitation is documented in `../outputs/README.md`.
+- The household deprivation profile uses `None` as an operational category that can include observed non-deprivation alongside missing, unlinked, or no-code records; this known source-data limitation is documented in `../outputs/README.md`.

@@ -141,37 +141,37 @@ The reconstructed `sail_sdc/scripts/5a - make cohort and events.R` selects the f
 
 #### Linkage, birth, and maternal baseline fields
 
-| Variable | Code-supported description |
-|-|---|
-| `c_alf_pe` | Encrypted/anonymized child linkage field |
-| `c_alf_sts_cd` | Child linkage-status code; code set not included |
-| `c_wob` | Child week/date of birth, renamed from `wob_cb` |
-| `c_stillbirth_flg` | Stillbirth flag |
-| `c_sex` | Child sex, renamed from `sex_cb` |
-| `c_ethnicity_nm` | Child ethnicity name from the birth source |
-| `c_birth_weight` | Recorded child birth weight |
-| `c_gest_age` | Recorded gestational age |
-| `c_preterm_birth_flg` | Preterm-birth flag |
-| `c_apgar_score` | Recorded Apgar score |
-| `labour_onset_nm` | Labour-onset source category; code set not included |
-| `delivery_nm` | Delivery source category; code set not included |
-| `welsh_birth_flg` | Welsh-birth flag |
-| `has_m` | Indicator of a linked/available mother record |
-| `m_alf_pe` | Encrypted/anonymized maternal linkage field |
-| `m_alf_sts_cd` | Maternal linkage-status code; code set not included |
-| `m_wob` | Maternal week/date of birth |
-| `m_multiple_gestation_flg` | Multiple-gestation flag |
-| `m_prev_livebirths` | Number of previous live births |
-| `m_parity` | Recorded maternal parity |
-| `m_breast_feeding_flg` | Breast-feeding flag |
-| `m_smoking_cat` | Source smoking category before harmonization |
+| Variable | Code-supported description                                                  |
+|-|-----------------------------------------------------------------------------|
+| `c_alf_pe` | Encrypted/anonymized child linkage field                                    |
+| `c_alf_sts_cd` | Child linkage status code; code set not included                            |
+| `c_wob` | Child week/date of birth, renamed from `wob_cb`                             |
+| `c_stillbirth_flg` | Stillbirth flag                                                             |
+| `c_sex` | Child sex, renamed from `sex_cb`                                            |
+| `c_ethnicity_nm` | Child ethnicity name from the birth source                                  |
+| `c_birth_weight` | Recorded child birth weight                                                 |
+| `c_gest_age` | Recorded gestational age                                                    |
+| `c_preterm_birth_flg` | Preterm birth flag                                                          |
+| `c_apgar_score` | Recorded Apgar score                                                        |
+| `labour_onset_nm` | Labour onset source category; code set not included                         |
+| `delivery_nm` | Delivery source category; code set not included                             |
+| `welsh_birth_flg` | Welsh birth flag                                                            |
+| `has_m` | Indicator of a linked/available mother record                               |
+| `m_alf_pe` | Encrypted/anonymized maternal linkage field                                 |
+| `m_alf_sts_cd` | Maternal linkage status code; code set not included                         |
+| `m_wob` | Maternal week/date of birth                                                 |
+| `m_multiple_gestation_flg` | Multiple gestation flag                                                     |
+| `m_prev_livebirths` | Number of previous live births                                              |
+| `m_parity` | Recorded maternal parity                                                    |
+| `m_breast_feeding_flg` | Breastfeeding flag                                                          |
+| `m_smoking_cat` | Source smoking category before harmonization                                |
 | `m_lsoa2011_cd` | Maternal 2011 LSOA code; potentially identifying geography and never public |
-| `m_wimd2014_decile` | Maternal WIMD 2014 decile |
-| `m_wimd2019_decile` | Maternal WIMD 2019 decile |
-| `m_townsend2011_quintile` | Maternal Townsend 2011 quintile |
-| `m_birth_country_nm` | Maternal birth-country name |
-| `f_birth_country_nm` | Paternal birth-country name |
-| `m_death_date` | Maternal death date |
+| `m_wimd2014_decile` | Maternal WIMD 2014 decile                                                   |
+| `m_wimd2019_decile` | Maternal WIMD 2019 decile                                                   |
+| `m_townsend2011_quintile` | Maternal Townsend 2011 quintile                                             |
+| `m_birth_country_nm` | Maternal birth country name                                                 |
+| `f_birth_country_nm` | Paternal birth country name                                                 |
+| `m_death_date` | Maternal death date                                                         |
 
 #### Household fields
 
@@ -191,25 +191,25 @@ The reconstructed `sail_sdc/scripts/5a - make cohort and events.R` selects the f
 
 #### Maternal and child health fields
 
-| Variable | Code-supported description |
-|--|---|
-| `m_gp_flg` | Maternal general-practice coverage/record flag |
-| `m_gp_reg_end_date` | Maternal GP registration end date |
-| `m_gp_first_att_date` | Maternal first GP attendance date |
-| `m_gp_att_n` | Maternal GP attendance count |
-| `m_alc_flg`, `m_alc_cat`, `m_alc_date` | Maternal alcohol-problem flag, source category, and date |
-| `m_htn_flg`, `m_htn_cat`, `m_htn_date` | Maternal hypertension flag, source category, and date |
+| Variable | Code-supported description                                              |
+|--|-------------------------------------------------------------------------|
+| `m_gp_flg` | Maternal general practice coverage/record flag                          |
+| `m_gp_reg_end_date` | Maternal GP registration end date                                       |
+| `m_gp_first_att_date` | Maternal first GP attendance date                                       |
+| `m_gp_att_n` | Maternal GP attendance count                                            |
+| `m_alc_flg`, `m_alc_cat`, `m_alc_date` | Maternal alcohol problem flag, source category, and date                |
+| `m_htn_flg`, `m_htn_cat`, `m_htn_date` | Maternal hypertension flag, source category, and date                   |
 | `m_lrn_flg`, `m_lrn_cat`, `m_lrn_date` | Maternal learning-difficulty/disability flag, source category, and date |
-| `m_mnt_flg`, `m_mnt_cat`, `m_mnt_date` | Maternal mental-health flag, source category, and date |
-| `m_smk_flg`, `m_smk_cat`, `m_smk_date` | Maternal smoking flag, source category, and date |
-| `m_sbm_flg`, `m_sbm_cat`, `m_sbm_date` | Maternal substance-use flag, source category, and date |
-| `c_gp_flg` | Child general-practice coverage/record flag |
-| `c_gp_reg_end_date` | Child GP registration end date |
-| `c_gp_first_att_date` | Child first GP attendance date |
-| `c_gp_att_n` | Child GP attendance count |
-| `c_cgm_flg`, `c_cgm_cat`, `c_cgm_date` | Child congenital-anomaly flag, source category, and date |
+| `m_mnt_flg`, `m_mnt_cat`, `m_mnt_date` | Maternal mental health flag, source category, and date                  |
+| `m_smk_flg`, `m_smk_cat`, `m_smk_date` | Maternal smoking flag, source category, and date                        |
+| `m_sbm_flg`, `m_sbm_cat`, `m_sbm_date` | Maternal substance use flag, source category, and date                  |
+| `c_gp_flg` | Child general practice coverage/record flag                             |
+| `c_gp_reg_end_date` | Child GP registration end date                                          |
+| `c_gp_first_att_date` | Child first GP attendance date                                          |
+| `c_gp_att_n` | Child GP attendance count                                               |
+| `c_cgm_flg`, `c_cgm_cat`, `c_cgm_date` | Child congenital anomaly flag, source category, and date                |
 
-### Exported-table fields
+### Exported table fields
 
 #### Cox model inputs to the forest plots
 
@@ -229,22 +229,22 @@ The reconstructed `sail_sdc/scripts/5a - make cohort and events.R` selects the f
 | `n_perc` | Formatted count and percentage in multivariable exports |
 | `sig` | Significance annotation in the bivariate export |
 
-#### Attributable-fraction workbooks
+#### Attributable fraction workbooks
 
-| Field | Meaning |
-|--|---|
-| `adj_lvl` | Adjustment stage |
-| `variable` | Exposure variable (`m_hh_deprv_no` or `m_hh_deprv_dms`) |
-| `level_from`, `level_to` | Observed source level and counterfactual destination level |
-| `excluded_levels` | Levels excluded from a scenario, if any |
-| `removed_dimension` | Named domain removed in a domain-removal scenario |
-| `dprv_rdctn_no` | Requested numerical reduction in deprivation count |
-| `deprivation_count_from`, `deprivation_count_to` | Numeric source and destination counts |
-| `scenario` | Readable transition such as `3 -> 2` or `employment+health -> health` |
-| `Time` | Follow-up age/time in years; public figures filter to `6` |
+| Field | Meaning                                                                               |
+|--|---------------------------------------------------------------------------------------|
+| `adj_lvl` | Adjustment stage                                                                      |
+| `variable` | Exposure variable (`m_hh_deprv_no` or `m_hh_deprv_dms`)                               |
+| `level_from`, `level_to` | Observed source level and counterfactual destination level                            |
+| `excluded_levels` | Levels excluded from a scenario, if any                                               |
+| `removed_dimension` | Named domain removed in a domain removal scenario                                     |
+| `dprv_rdctn_no` | Requested numerical reduction in deprivation count                                    |
+| `deprivation_count_from`, `deprivation_count_to` | Numeric source and destination counts                                                 |
+| `scenario` | Readable transition such as `3 -> 2` or `employment+health -> health`                 |
+| `Time` | Follow-up age/time in years; public figures filter to `6`                             |
 | `Estimated_PAF` | Model-based population attributable fraction stored as a proportion, not a percentage |
-| `CI` | Formatted confidence-interval text |
-| `conf.low`, `conf.high` | Numeric lower and upper 95% interval bounds |
+| `CI` | Formatted confidence interval text                                                    |
+| `conf.low`, `conf.high` | Numeric lower and upper 95% interval bounds                                           |
 
 The public plot multiplies `Estimated_PAF`, `conf.low`, and `conf.high` by 100. Each displayed scenario reassigns only its named source category while leaving other exposure categories unchanged. The resulting PAF is the model-estimated relative change in age-six CPR risk between the observed data and that counterfactual dataset. A positive 5% value indicates approximately 5% lower predicted risk under the named reassignment; a negative value indicates higher predicted risk. It is a conditional model summary, not an observed intervention effect or a percentage of registrations demonstrated to be preventable.
 
@@ -262,7 +262,7 @@ The public plot multiplies `Estimated_PAF`, `conf.low`, and `conf.high` by 100. 
 | `level_label` | Human-readable level annotation retained for auditability |
 | `deprv_dms` | Number of named deprived domains in a profile; profile plot only |
 
-### Household-deprivation data-quality limitation
+### Household deprivation data quality limitation
 
 The household-deprivation coding was double-checked against the available linked Census fields and retained as the final analysis specification. A source-data limitation remains: the manuscript's descriptive table reports 51,909 children with deprivation count zero and 17,174 with a missing count, compared with 68,981 with profile `None` and 102 with a missing profile. The 15 non-`None` profiles sum to 37,282—the number with at least one observed deprived domain—while profile `None` exceeds count zero by 17,072.
 
