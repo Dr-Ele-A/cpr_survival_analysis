@@ -10,8 +10,6 @@
 4. Use the public scripts in `../scripts/` with the released aggregate/model-derived tables in `outputs/`.
 5. Keep the secure original and public copy of a released figure byte-identical.
 
-The repository `.gitignore` excludes row-level data formats, local R state, secrets, and temporary files. It explicitly keeps every file under `sail_sdc/outputs/` available to Git.
-
 ## Workflow summary
 
 1. `scripts/5a - make cohort and events.R` documents an upstream, reconstructed cohort-building step that reads row-level `.qs` objects and writes `data/d_cohort_clean.qs`.
